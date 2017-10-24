@@ -11,3 +11,7 @@ sudo unzip twsapi_macunix.973.05.zip -d ~/  # need at least version 9.73
 cd ~/IBJts/source/pythonclient
 sudo python3 setup.py install
 ```
+
+# data subscriptions
+You will need `NASDAQ (Network C/UTP)` to get most US stocks (NASDAQ, NYSE, ...)
+Right now it's $1.50/month.
