@@ -1,6 +1,7 @@
 # Gist example of IB wrapper from here: https://gist.github.com/robcarver17/f50aeebc2ecd084f818706d9f05c1eb4
 #
 # Download API from http://interactivebrokers.github.io/#
+# (must be at least version 9.73)
 #
 # Install python API code /IBJts/source/pythonclient $ python3 setup.py install
 #
@@ -17,15 +18,19 @@
 # pwd: demo123
 #
 
+import pprint
+import queue
+import datetime
+
+import pandas as pd
+
 from ibapi.wrapper import EWrapper
 from ibapi.client import EClient
 from ibapi.contract import Contract as IBcontract
 from threading import Thread
-import queue
-import datetime
 
-DEFAULT_HISTORIC_DATA_ID=50
-DEFAULT_GET_CONTRACT_ID=43
+DEFAULT_HISTORIC_DATA_ID = 50
+DEFAULT_GET_CONTRACT_ID = 43
 
 ## marker for when queue is finished
 FINISHED = object()
@@ -45,8 +50,8 @@ class finishableQueue(object):
         :param timeout: how long to wait before giving up
         :return: list of queue elements
         """
-        contents_of_queue=[]
-        finished=False
+        contents_of_queue = []
+        finished = False
 
         while not finished:
             try:
@@ -81,11 +86,12 @@ class TestWrapper(EWrapper):
     def __init__(self):
         self._my_contract_details = {}
         self._my_historic_data_dict = {}
+        self._my_earliest_timestamp_dict = {}
         self._my_errors = queue.Queue()
 
     ## error handling code
     def init_error(self):
-        error_queue=queue.Queue()
+        error_queue = queue.Queue()
         self._my_errors = error_queue
 
     def get_error(self, timeout=5):
@@ -135,19 +141,41 @@ class TestWrapper(EWrapper):
         return historic_data_queue
 
 
+    def init_earliest_timestamp(self, tickerid):
+        earliest_timestamp_queue = self._my_earliest_timestamp_dict[tickerid] = queue.Queue()
+
+        return earliest_timestamp_queue
+
+
     def historicalData(self, tickerid , bar):
 
         ## Overriden method
         ## Note I'm choosing to ignore barCount, WAP and hasGaps but you could use them if you like
-        bardata=(bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume)
+        # pprint.pprint(bar.__dict__)
+        bardata = (bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume)
 
-        historic_data_dict=self._my_historic_data_dict
+        historic_data_dict = self._my_historic_data_dict
 
         ## Add on to the current data
         if tickerid not in historic_data_dict.keys():
             self.init_historicprices(tickerid)
 
         historic_data_dict[tickerid].put(bardata)
+
+
+    def headTimestamp(self, tickerid, headTimestamp:str):
+        # overridden method
+
+        earliest_timestamp_dict = self._my_earliest_timestamp_dict
+
+        ## Add on to the current data
+        if tickerid not in earliest_timestamp_dict.keys():
+            self.init_earliest_timestamp(tickerid)
+
+        earliest_timestamp_dict[tickerid].put(headTimestamp)
+
+        self._my_earliest_timestamp_dict[tickerid].put(FINISHED)
+
 
     def historicalDataEnd(self, tickerid, start:str, end:str):
         ## overriden method
@@ -199,15 +227,19 @@ class TestClient(EClient):
         if len(new_contract_details)>1:
             print("got multiple contracts using first one")
 
-        new_contract_details=new_contract_details[0]
+        new_contract_details = new_contract_details[0]
 
-        resolved_ibcontract=new_contract_details.summary
+        resolved_ibcontract = new_contract_details.contract
 
         return resolved_ibcontract
 
 
-    def get_IB_historical_data(self, ibcontract, durationStr="1 Y", barSizeSetting="1 day",
-                               tickerid=DEFAULT_HISTORIC_DATA_ID):
+    def get_IB_historical_data(self,
+                                ibcontract,
+                                durationStr="1 Y",
+                                barSizeSetting="1 day",
+                                tickerid=DEFAULT_HISTORIC_DATA_ID,
+                                latest_date=datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z")):
 
         """
         Returns historical prices for a contract, up to today
@@ -223,7 +255,7 @@ class TestClient(EClient):
         self.reqHistoricalData(
             tickerid,  # tickerId,
             ibcontract,  # contract,
-            datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z"),  # endDateTime,
+            latest_date,  # endDateTime,
             durationStr,  # durationStr,
             barSizeSetting,  # barSizeSetting,
             "TRADES",  # whatToShow,
@@ -232,6 +264,60 @@ class TestClient(EClient):
             False,  # KeepUpToDate <<==== added for api 9.73.2
             [] ## chartoptions not used
         )
+
+
+
+        ## Wait until we get a completed data, an error, or get bored waiting
+        MAX_WAIT_SECONDS = 10
+        print("Getting historical data from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+
+        historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
+
+        while self.wrapper.is_error():
+            print(self.get_error())
+
+        if historic_data_queue.timed_out():
+            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+
+        self.cancelHistoricalData(tickerid)
+
+
+        return historic_data
+
+
+    def getEarliestTimestamp(self, contract, whatToShow='TRADES', useRTH=1, formatDate=1, tickerid=DEFAULT_HISTORIC_DATA_ID):
+        print(tickerid)
+        # parameters: https://interactivebrokers.github.io/tws-api/classIBApi_1_1EClient.html#a059b5072d1e8e8e96394e53366eb81f3
+
+        ## Make a place to store the data we're going to return
+        earliest_timestamp_queue = finishableQueue(self.init_earliest_timestamp(tickerid))
+
+        self.reqHeadTimeStamp(tickerid, contract, whatToShow, useRTH, formatDate)
+
+        ## Wait until we get a completed data, an error, or get bored waiting
+        MAX_WAIT_SECONDS = 10
+        print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+
+        earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
+
+        while self.wrapper.is_error():
+            print(self.get_error())
+
+        if earliest_timestamp_queue.timed_out():
+            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+
+        self.cancelHeadTimeStamp(tickerid)
+
+        return earliest
+
+
+
+    def getNewsProviders(self):
+        ## Make a place to store the data we're going to return
+        historic_data_queue = finishableQueue(self.init_historicprices(tickerid))
+
+        # Request news providers. Native method in EClient
+        self.reqNewsProviders()
 
 
 
@@ -249,8 +335,12 @@ class TestClient(EClient):
 
         self.cancelHistoricalData(tickerid)
 
+        print("newsProviders: ")
+        for provider in newsProviders:
+            print(provider)
 
-        return historic_data
+
+        return newsProviders
 
 
 
@@ -272,17 +362,33 @@ class TestApp(TestWrapper, TestClient):
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-# available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
+    # available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
     ibcontract = IBcontract()
     ibcontract.secType = "STK"
-    ibcontract.lastTradeDateOrContractMonth="201809"
-    ibcontract.symbol="SNAP"
-    ibcontract.exchange="ISLAND"
+    # get todays date, format as YYYYMMDD -- need to check this is correct
+    # today = datetime.datetime.today().strftime('%Y%m%d')
+    # ibcontract.lastTradeDateOrContractMonth = '20180711'#today
+    ibcontract.symbol = "SNAP"
+    ibcontract.exchange = "ISLAND"
 
-    resolved_ibcontract=app.resolve_ib_contract(ibcontract)
+    resolved_ibcontract = app.resolve_ib_contract(ibcontract)
 
-    historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 Y", barSizeSetting="1 day")
+    # duration units and bar sizes:
+    # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_duration
+    # limitations:
+    # https://interactivebrokers.github.io/tws-api/historical_limitations.html
+    # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
+    # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 W", barSizeSetting="3 mins", latest_date='20180504 14:30:00')
 
-    print(historic_data)
+    # get earliest timestamp
+    earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
+
+    # convert to pandas dataframe
+    # date, open, high, low, close, vol
+    # need to adjust for splits/etc
+
+
+
+    #print(historic_data)
 
     #app.disconnect()
