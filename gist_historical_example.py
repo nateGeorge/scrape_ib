@@ -18,6 +18,12 @@
 # pwd: demo123
 #
 
+# duration units and bar sizes:
+# https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_duration
+# limitations:
+# https://interactivebrokers.github.io/tws-api/historical_limitations.html
+
+
 import time
 import pprint
 import queue
@@ -25,6 +31,8 @@ import datetime
 from pytz import timezone
 
 import pandas as pd
+import numpy as np
+from tqdm import tqdm
 
 from ibapi.wrapper import EWrapper
 from ibapi.client import EClient
@@ -528,7 +536,7 @@ class TestApp(TestWrapper, TestClient):
             ASK
             OPTION_IMPLIED_VOLATILITY
 
-        if data already exists, appends to it
+        if data already exists, updates and appends to it
         """
         contract = self.get_stock_contract(ticker=ticker)
         folder = 'data/'
@@ -612,6 +620,8 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     bss = barSizeSetting.replace(' ', '_')
 
     trades = pd.read_hdf(folder + ticker + '_trades_' + bss + '.h5')
+    # fill 0 volume with 1
+    trades.at[trades['volume'] == 0, 'volume'] = 1
     bid = pd.read_hdf(folder + ticker + '_bid_' + bss + '.h5')
     ask = pd.read_hdf(folder + ticker + '_ask_' + bss + '.h5')
     opt_vol = pd.read_hdf(folder + ticker + '_opt_vol_' + bss + '.h5')
@@ -620,28 +630,193 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     ask.columns = ['ask_' + c for c in ask.columns]
     opt_vol.columns = ['opt_vol_' + c for c in opt_vol.columns]
 
-    full_df = pd.concat([trades, bid, ask, opt_vol], axis=1, join='inner')
+    # inner join should drop na's but just to be safe
+    full_df = pd.concat([trades, bid, ask, opt_vol], axis=1, join='inner').dropna()
 
     return full_df
 
+
+def make_feats_targs_individ_df(df, future_gap_idx_steps, future_span_idx_steps, feature_span, feature_span_idx_steps):
+    """
+    """
+    targets = df['close'].pct_change(future_span_idx_steps).shift(-future_gap_idx_steps - future_span_idx_steps)
+
+    pct_change_features = df.copy().pct_change(feature_span_idx_steps, axis=0)
+    pct_change_features.columns = [c + '_' + str(feature_span) + '_min_pct_chg' for c in pct_change_features.columns]
+
+    df['targets'] = targets
+
+    # inner join should drop na's but just to be safe
+    feats_targs = pd.concat([df, pct_change_features], axis=1, join='inner').dropna()
+
+    feat_cols = [c for c in feats_targs.columns if c != 'targets']
+
+    return feats_targs[feat_cols], feats_targs['targets']
+
+
+def make_features_targets(full_df, future_gap=0, future_span=15, feature_span=15, intraday=True):
+    """
+    uses close price to make targets -- percent change over certain time in future
+
+    features are percent change of other columns as well as raw values
+
+    future_gap is number of minutes between current time and start of future pct_change
+    future_span is number of minutes to calculate price percent change
+    feature_span is number of minutes to calculate pct change of everything in df
+    intraday is boolean; if True, will only get features/targs within each day
+        and not extending over close/open times
+    """
+    # copy full_df so we don't modify it
+    full_df_copy = full_df.copy()
+
+    # get number of minutes between timesteps -- won't work if not integer minutes
+    minute_gap = (full_df_copy.index[1] - full_df_copy.index[0]).seconds // 60
+    future_gap_idx_steps = future_gap // minute_gap
+    future_span_idx_steps = future_span // minute_gap
+    feature_span_idx_steps = feature_span // minute_gap
+
+    # TODO: use dask or multicore/multithread
+    if intraday:
+        # get dataframes for each day and make feats targs, then join
+        days = [idx.date() for idx in full_df_copy.index]
+        unique_days = np.unique(days)
+        all_feats, all_targs = [], []
+        for d in tqdm(unique_days):
+            df = full_df_copy[full_df_copy.index.date == d].copy()
+            d_feats, d_targs = make_feats_targs_individ_df(df,
+                                    future_gap_idx_steps=future_gap_idx_steps,
+                                    future_span_idx_steps=future_span_idx_steps,
+                                    feature_span=feature_span,
+                                    feature_span_idx_steps=feature_span_idx_steps)
+            all_feats.append(d_feats)
+            all_targs.append(d_targs)
+
+        return pd.concat(all_feats), pd.concat(all_targs)
+
+    else:
+        # get feats and targets in bulk
+        return make_feats_targs_individ_df(full_df,
+                                future_gap_idx_steps=future_gap_idx_steps,
+                                future_span_idx_steps=future_span_idx_steps,
+                                feature_span=feature_span,
+                                feature_span_idx_steps=feature_span_idx_steps)
+
+
+def check_autocorrelations():
+    """
+    checks autocorrelations between previous price changes and future price changes
+    over a range of timesteps
+    """
 
 
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-    snap_contract = app.get_stock_contract(ticker='SNAP')
-    # duration units and bar sizes:
-    # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_duration
-    # limitations:
-    # https://interactivebrokers.github.io/tws-api/historical_limitations.html
+    ticker = 'SNAP'
+    full_df = load_data(ticker=ticker)
+    feature_span = 30
+    feats, targs = make_features_targets(full_df, future_span=30, feature_span=feature_span)
+    feats_targs = feats.copy()
+    # make bid-ask close differences
+    # high and open seem to be most correlated
+    feats_targs['ask_bid_close'] = feats_targs['ask_close'] - feats_targs['bid_close']
+    feats_targs['ask_bid_open'] = feats_targs['ask_open'] - feats_targs['bid_open']
+    feats_targs['ask_bid_high'] = feats_targs['ask_high'] - feats_targs['bid_high']
+    feats_targs['ask_bid_low'] = feats_targs['ask_low'] - feats_targs['bid_low']
+
+    feats_targs['targets'] = targs
+
+
+    # with future_gap=0, future_span=15, feature_span=15, intraday=True
+    #
+    # with future_span=60, feature_span=60
+    #
+    # with future_span=30, feature_span=30
+    #
+
+    import seaborn as sns
+    f = plt.figure(figsize=(12, 12))
+    sns.heatmap(feats_targs.corr())
+    plt.tight_layout()
+
+    # features that are highly correlated:
+    # OHLC with all bids and OHLC -- keep only close
+    # all bids with all bids
+    # same for OHLC and bid changes
+    # all opt_vol with each other, except high with others is a bit less correlated
+    # volume with itself and % change
+    # bid/ask with itself and each other
+
+    # gets more correlated with target as time shortens
+    f = plt.figure(figsize=(12, 12))
+    sns.heatmap(feats_targs.iloc[-10000:].corr())
+    plt.tight_layout()
+
+    import matplotlib.pyplot as plt
+    plt.scatter(feats['close_15_min_pct_chg'], targs)
+    plt.scatter(feats['close'], targs)
+    # when opt_vol_high is very high, seems to be highly correlated with price change over 30 mins
+    plt.scatter(feats['opt_vol_high'], targs)
+    # all on one day -- 12/09/2017
+    feats_targs[['opt_vol_high', 'targets']][feats['opt_vol_high'] > 5]
+    # nothing for opt vol low for SNAP
+    plt.scatter(feats['opt_vol_low'], targs)
+
+    targs.plot.hist(bins=30)
+
+    from sklearn.ensemble import RandomForestRegressor
+
+    # trim features
+    feats_trimmed = feats.copy()
+    fs = str(feature_span)
+    droplist = ['open',
+                'high',
+                'low',
+                'bid_open',
+                'bid_high',
+                'bid_low',
+                'bid_close',
+                'ask_open',
+                'ask_high',
+                'ask_low',
+                'ask_close',
+                'opt_vol_open',
+                'opt_vol_low',
+                'open_' + fs + '_min_pct_chg',
+                'high_' + fs + '_min_pct_chg',
+                'low_' + fs + '_min_pct_chg',
+                'bid_open_' + fs + '_min_pct_chg',
+                'bid_high_' + fs + '_min_pct_chg',
+                'bid_low_' + fs + '_min_pct_chg',
+                'bid_close_' + fs + '_min_pct_chg',
+                'ask_open_' + fs + '_min_pct_chg',
+                'ask_high_' + fs + '_min_pct_chg',
+                'ask_low_' + fs + '_min_pct_chg',
+                'ask_close_' + fs + '_min_pct_chg']
+    feats_trimmed.drop(droplist, axis=1, inplace=True)
+
+    train_size = 0.85
+    train_idx = int(train_size * feats_trimmed.shape[0])
+    train_feats = feats_trimmed.iloc[:train_idx]
+    train_targs = targs.iloc[:train_idx]
+    test_feats = feats_trimmed.iloc[train_idx:]
+    test_targs = targs.iloc[train_idx:]
+
+    start = time.time()
+    rfr = RandomForestRegressor(n_estimators=500, n_jobs=-1, min_samples_split=10, random_state=42)
+    end = time.time()
+    rfr.fit(train_feats, train_targs)
+    print('training took:', int(start - end), 'seconds')
+    print(rfr.score(train_feats, train_targs))
+    print(rfr.score(test_feats, test_targs))
+
+    #snap_contract = app.get_stock_contract(ticker='SNAP')
+
     # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
     # historic_data = app.get_IB_historical_data(snap_contract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
 
-
     # seems to have weird issues with short bars, and seems to be a long-term indicator
     # snap_vol = app.get_hist_data_date_range(snap_contract, barSizeSetting='3 mins', whatToShow='HISTORICAL_VOLATILITY', end_date='20170425')
-
-
 
     # get earliest timestamp
     # earliest = app.getEarliestTimestamp(snap_contract, tickerid=200)
