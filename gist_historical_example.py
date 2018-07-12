@@ -18,9 +18,11 @@
 # pwd: demo123
 #
 
+import time
 import pprint
 import queue
 import datetime
+from pytz import timezone
 
 import pandas as pd
 
@@ -179,7 +181,7 @@ class TestWrapper(EWrapper):
 
     def headTimestamp(self, tickerid, headTimestamp:str):
         ## overridden method
-        if tickerid not in earliest_timestamp_dict.keys():
+        if tickerid not in self._my_earliest_timestamp_dict.keys():
             self.init_earliest_timestamp(tickerid)
 
         self._my_earliest_timestamp_dict[tickerid].put(headTimestamp)
@@ -230,7 +232,7 @@ class TestClient(EClient):
         self.reqContractDetails(reqId, ibcontract)
 
         ## Run until we get a valid contract(s) or get bored waiting
-        MAX_WAIT_SECONDS = 10
+        MAX_WAIT_SECONDS = 3
         new_contract_details = contract_details_queue.get(timeout = MAX_WAIT_SECONDS)
 
         while self.wrapper.is_error():
@@ -255,17 +257,23 @@ class TestClient(EClient):
 
     def get_IB_historical_data(self,
                                 ibcontract,
+                                whatToShow="TRADES",
                                 durationStr="1 Y",
                                 barSizeSetting="1 day",
                                 tickerid=DEFAULT_HISTORIC_DATA_ID,
-                                latest_date=datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z")):
+                                latest_date=None):
 
         """
-        Returns historical prices for a contract, up to today
+        Returns historical prices for a contract, up to latest_date
+        if latest_date is none, uses todays date
+        latest_date should be of form %Y%m%d %H:%M:%S %Z
+
         ibcontract is a Contract
         :returns list of prices in 4 tuples: Open high low close volume
         """
-
+        # set latest_date to today and now if it is None
+        if latest_date is None:
+            latest_date = get_latest_date_local()
 
         ## Make a place to store the data we're going to return
         historic_data_queue = finishableQueue(self.init_historicprices(tickerid))
@@ -277,17 +285,17 @@ class TestClient(EClient):
             latest_date,  # endDateTime,
             durationStr,  # durationStr,
             barSizeSetting,  # barSizeSetting,
-            "TRADES",  # whatToShow,
-            1,  # useRTH,
-            1,  # formatDate
-            False,  # KeepUpToDate <<==== added for api 9.73.2
-            [] ## chartoptions not used
+            whatToShow=whatToShow,
+            useRTH=1,
+            formatDate=1,
+            keepUpToDate=False,  #  <<==== added for api 9.73.2
+            chartOptions=[] ## chartOptions not used
         )
 
 
 
         ## Wait until we get a completed data, an error, or get bored waiting
-        MAX_WAIT_SECONDS = 10
+        MAX_WAIT_SECONDS = 5
         print("Getting historical data from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
         historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
@@ -300,8 +308,16 @@ class TestClient(EClient):
 
         self.cancelHistoricalData(tickerid)
 
+        # convert to pandas dataframe
+        # date, open, high, low, close, vol
+        # already adjusted for splits
+        if len(historic_data) != 0:
+            df = pd.DataFrame.from_records(data=historic_data, index='datetime', columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+            df.index = pd.to_datetime(df.index)
 
-        return historic_data
+            return df
+        else:
+            return historic_data
 
 
     def getEarliestTimestamp(self, contract, whatToShow='TRADES', useRTH=1, formatDate=1, tickerid=DEFAULT_GET_EARLIEST_ID):
@@ -313,7 +329,7 @@ class TestClient(EClient):
         self.reqHeadTimeStamp(tickerid, contract, whatToShow, useRTH, formatDate)
 
         ## Wait until we get a completed data, an error, or get bored waiting
-        MAX_WAIT_SECONDS = 10
+        MAX_WAIT_SECONDS = 2
         print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
         earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
@@ -326,7 +342,7 @@ class TestClient(EClient):
 
         self.cancelHeadTimeStamp(tickerid)
 
-        return earliest
+        return earliest[0]  # first element in list
 
 
     def getNewsProviders(self):
@@ -338,7 +354,7 @@ class TestClient(EClient):
         self.reqNewsProviders()
 
         ## Wait until we get a completed data, an error, or get bored waiting
-        MAX_WAIT_SECONDS = 10
+        MAX_WAIT_SECONDS = 2
         print("Getting list of news providers from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
         nps = np_queue.get(timeout=MAX_WAIT_SECONDS)
@@ -367,6 +383,168 @@ class TestApp(TestWrapper, TestClient):
         self.init_error()
 
 
+    def get_hist_data_date_range(self,
+                                ibcontract,
+                                whatToShow='TRADES',
+                                barSizeSetting='3 mins',
+                                start_date=None,
+                                end_date=None,
+                                tickerid=DEFAULT_HISTORIC_DATA_ID):
+        """
+        gets historic data for date range
+        if start_date is None, then first finds earliest date available,
+        and gets all data to there
+
+        if end_date is None, will get data to latest possible time
+
+        start_date and end_date should be strings in format YYYYMMDD
+
+        useful options for whatToShow for stocks can be:
+            TRADES
+            BID
+            ASK
+            OPTION_IMPLIED_VOLATILITY
+            HISTORICAL_VOLATILITY
+
+        """
+        smallbars = ['1 secs', '5 secs', '10 secs', '15 secs', '30 secs', '1 min']
+        max_step_sizes = {'1 secs': '1800 S',  # 30 mins
+                            '5 secs': '3600 S',  # 1 hour
+                            '10 secs': '14400 S',  # 4 hours
+                            '15 secs': '14400 S',  # 4 hours
+                            '30 secs': '28800 S',  # 8 hours
+                            '1 min': '1 D',
+                            '2 mins': '2 D',
+                            '3 mins': '1 W',
+                            '5 mins': '1 W',
+                            '10 mins': '1 W',
+                            '15 mins': '1 W',
+                            '20 mins': '1 W',
+                            '30 mins': '1 M',
+                            '1 hour': '1 M',
+                            '2 hours': '1 M',
+                            '3 hours': '1 M',
+                            '4 hours': '1 M',
+                            '8 hours': '1 M',
+                            '1 day': '1 Y',
+                            '1 week': '1 Y',
+                            '1 month': '1 Y'}
+
+        earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
+        earliest_datestamp = earliest_timestamp[:8]
+        # if timeout, will return empty list
+        df = []
+
+        if end_date is None:
+            latest_date = None
+        else:
+            # TODO: need to adopt this to other than mountain time
+            latest_date = end_date + ' ' + get_close_hour_local() + ':00:00'
+
+        while type(df) is list:
+            df = self.get_IB_historical_data(ibcontract,
+                                            whatToShow=whatToShow,
+                                            durationStr=max_step_sizes[barSizeSetting],
+                                            barSizeSetting=barSizeSetting,
+                                            tickerid=tickerid,
+                                            latest_date=latest_date)
+
+        earliest_date = df.index[0]
+        full_df = df
+        self.df = full_df
+
+        # keep going until the same result is returned twice...not perfectly efficient but oh well
+        previous_earliest_date = None
+        i = 0
+        start_time = time.time()
+        is_list = 0
+        while previous_earliest_date != earliest_date:
+            i += 1
+            print(i)
+            print(previous_earliest_date)
+            print(earliest_date)
+            df = self.get_IB_historical_data(ibcontract,
+                                            whatToShow=whatToShow,
+                                            durationStr=max_step_sizes[barSizeSetting],
+                                            barSizeSetting=barSizeSetting,
+                                            tickerid=tickerid,
+                                            latest_date=earliest_date.strftime('%Y%m%d %H:%M:%S'))
+            if type(df) is list:
+                is_list += 1
+                # we've probably hit the earliest time we can get
+                if is_list >= 3 and earliest_date.date().strftime('%Y%m%d') == earliest_datestamp:
+                    break
+
+                continue
+
+            previous_earliest_date = earliest_date
+            earliest_date = df.index[0]
+            full_df = pd.concat([df, full_df])
+            self.df = full_df
+            is_list = 0
+
+
+            # no more than 6 requests every 2s for bars under 30s
+            # https://interactivebrokers.github.io/tws-api/historical_limitations.html
+            # TODO: take care of 60 requests per 10 mins
+            if barSizeSetting in smallbars and i >= 6:
+                time_left = 2 - (time.time() - start_time())
+                i = 0
+                time.sleep(time_left)
+
+
+        return full_df
+
+
+def get_datetime_from_date(date='2018-06-30'):
+    """
+    not sure if I need this anymore...
+
+
+    converts a date to a datetime (end-of-day) for historical data gathering
+
+    date should be a string in format YYYYMMDD
+
+    uses eastern timezone (EDT or EST) by default
+
+    TODO: convert eastern to local timezone from machine
+    """
+    tz='US/Eastern'
+    tz_obj = timezone(tz)
+    date = datetime.datetime.strptime(date, '%Y-%m-%d')
+    date = date.replace(hour = 16, minute = 0, second = 0)
+    date = tz_obj.localize(date)
+
+    return date.strftime('%Y%m%d %H:%M:%S %Z')
+
+
+def get_latest_date_local():
+    """
+    gets the latest date with the machine's local timezone
+
+    endDateTime and startDateTime "Uses TWS timezone specified at login."
+    at least for tick-by-tick data
+    """
+    machines_tz = datetime.datetime.now(datetime.timezone.utc).astimezone().tzname()
+
+    latest_date = datetime.datetime.today()
+    # doesn't work with machines tz in there
+    latest_date = latest_date.strftime('%Y%m%d %H:%M:%S')# + machines_tz
+
+    return latest_date
+
+
+def get_close_hour_local():
+    """
+    gets closing hour in local machine time (4 pm Eastern)
+    """
+    eastern_tz = timezone('US/Eastern')
+    eastern_close = datetime.datetime(year=2018, month=6, day=29, hour=16)
+    eastern_close = eastern_tz.localize(eastern_close)
+
+    return str(eastern_close.astimezone().hour)
+
+
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
@@ -386,20 +564,15 @@ if __name__ == '__main__':
     # limitations:
     # https://interactivebrokers.github.io/tws-api/historical_limitations.html
     # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
-    # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 W", barSizeSetting="3 mins", latest_date='20180504 14:30:00')
+    # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
 
+    hd = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins')#, end_date='20170401')
     # get earliest timestamp
     # earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
 
     # get list of news providers
-    nps = app.getNewsProviders()
+    # nps = app.getNewsProviders()
 
-    # convert to pandas dataframe
-    # date, open, high, low, close, vol
-    # need to adjust for splits/etc
-
-
-
-    #print(historic_data)
+    # look for period with highest autocorrelation and use that as prediction period
 
     #app.disconnect()
