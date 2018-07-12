@@ -500,6 +500,60 @@ class TestApp(TestWrapper, TestClient):
         return full_df
 
 
+    def get_stock_contract(ticker='SNAP'):
+        """
+        gets resolved IB contract for stocks
+
+        assumes ISLAND exchange for now (NASDAQ and maybe others?)
+        """
+        # available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
+        ibcontract = IBcontract()
+        ibcontract.secType = 'STK'
+        # get todays date, format as YYYYMMDD -- need to check this is correct
+        # today = datetime.datetime.today().strftime('%Y%m%d')
+        # ibcontract.lastTradeDateOrContractMonth = '20180711'#today
+        ibcontract.symbol = ticker
+        ibcontract.exchange = 'ISLAND'
+
+        resolved_ibcontract = app.resolve_ib_contract(ibcontract)
+
+        return resolve_ib_contract
+
+
+    def download_all_history_stock(ticker='SNAP', barSizeSetting='3 mins'):
+        """
+        downloads all historical data for a stock including
+            TRADES
+            BID
+            ASK
+            OPTION_IMPLIED_VOLATILITY
+
+        if data already exists, appends to it
+        """
+        folder = 'data/'
+        start_date = None
+        mode = 'w'
+
+        if os.path.exists(folder + ticker + '_trades.h5'):
+            cur_trades = pd.read_hdf(ticker + '_trades.h5')
+            latest_datetime = cur_trades.index[-1]
+            start_date = latest_datetime.strftime('%Y%m%d')
+            mode = 'r+'  # append to existing files, should throw error if they don't exist
+
+        end_date = None#'20170401'  # smaller amount of data for prototyping/testing
+        trades = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=start_date)
+        bid = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=start_date)
+        ask = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+        opt_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
+
+
+        bss = barSizeSetting.replace(' ', '_')
+        trades.to_hdf(folder + ticker + '_trades_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        bid.to_hdf(folder + ticker + '_bid_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        ask.to_hdf(folder + ticker + '_ask_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        opt_vol.to_hdf(folder + ticker + '_opt_vol_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+
+
 def get_datetime_from_date(date='2018-06-30'):
     """
     not sure if I need this anymore...
@@ -549,46 +603,47 @@ def get_close_hour_local():
     return str(eastern_close.astimezone().hour)
 
 
+def load_data(ticker='SNAP', barSizeSetting='3 mins'):
+    """
+    loads historical tick data
+    """
+    folder = 'data/'
+    bss = barSizeSetting.replace(' ', '_')
+
+    trades = pd.read_hdf(folder + ticker + '_trades_' + bss + '.h5')
+    bid = pd.read_hdf(folder + ticker + '_bid_' + bss + '.h5')
+    ask = pd.read_hdf(folder + ticker + '_ask_' + bss + '.h5')
+    opt_vol = pd.read_hdf(folder + ticker + '_opt_vol_' + bss + '.h5')
+    # rename columns so can join to one big dataframe
+    bid.columns = ['bid_' + c for c in bid.columns]
+    ask.columns = ['ask_' + c for c in ask.columns]
+    opt_vol.columns = ['opt_vol_' + c for c in opt_vol.columns]
+
+    full_df = pd.concat([trades, bid, ask, opt_vol], axis=1, join='inner')
+
+    return full_df
+
+
+
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-    # available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
-    ibcontract = IBcontract()
-    ibcontract.secType = "STK"
-    # get todays date, format as YYYYMMDD -- need to check this is correct
-    # today = datetime.datetime.today().strftime('%Y%m%d')
-    # ibcontract.lastTradeDateOrContractMonth = '20180711'#today
-    ibcontract.symbol = "SNAP"
-    ibcontract.exchange = "ISLAND"
-
-    resolved_ibcontract = app.resolve_ib_contract(ibcontract)
-
+    snap_contract = app.get_stock_contract(ticker='SNAP')
     # duration units and bar sizes:
     # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_duration
     # limitations:
     # https://interactivebrokers.github.io/tws-api/historical_limitations.html
     # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
-    # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
+    # historic_data = app.get_IB_historical_data(snap_contract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
 
-
-    end_date = None#'20170401'  # smaller amount of data for prototyping/testing
-    snap_trades = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', end_date=end_date)
-    snap_bid = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='BID', end_date=end_date)
-    snap_ask = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='ASK', end_date=end_date)
-    snap_opt_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date)
-
-    snap_trades.to_hdf('snap_trades.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
-    snap_bid.to_hdf('snap_bid.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
-    snap_ask.to_hdf('snap_ask.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
-    snap_opt_vol.to_hdf('snap_opt_vol.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
 
     # seems to have weird issues with short bars, and seems to be a long-term indicator
-    # snap_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='HISTORICAL_VOLATILITY', end_date='20170425')
+    # snap_vol = app.get_hist_data_date_range(snap_contract, barSizeSetting='3 mins', whatToShow='HISTORICAL_VOLATILITY', end_date='20170425')
 
 
 
     # get earliest timestamp
-    # earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
+    # earliest = app.getEarliestTimestamp(snap_contract, tickerid=200)
 
     # get list of news providers
     # nps = app.getNewsProviders()
