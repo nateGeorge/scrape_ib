@@ -530,6 +530,7 @@ class TestApp(TestWrapper, TestClient):
 
         if data already exists, appends to it
         """
+        contract = self.get_stock_contract(ticker=ticker)
         folder = 'data/'
         start_date = None
         mode = 'w'
@@ -541,10 +542,10 @@ class TestApp(TestWrapper, TestClient):
             mode = 'r+'  # append to existing files, should throw error if they don't exist
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
-        trades = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=start_date)
-        bid = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=start_date)
-        ask = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
-        opt_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
+        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=start_date)
+        bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=start_date)
+        ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+        opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
 
 
         bss = barSizeSetting.replace(' ', '_')
