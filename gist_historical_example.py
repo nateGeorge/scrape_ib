@@ -314,6 +314,9 @@ class TestClient(EClient):
         if len(historic_data) != 0:
             df = pd.DataFrame.from_records(data=historic_data, index='datetime', columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df.index = pd.to_datetime(df.index)
+            if whatToShow != 'TRADES':
+                # volume only available for trades
+                df.drop('volume', axis=1, inplace=True)
 
             return df
         else:
@@ -430,6 +433,7 @@ class TestApp(TestWrapper, TestClient):
                             '1 week': '1 Y',
                             '1 month': '1 Y'}
 
+        # TODO: check if earliest timestamp is nothing or before/after end_date
         earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
         earliest_datestamp = earliest_timestamp[:8]
         # if timeout, will return empty list
@@ -566,7 +570,17 @@ if __name__ == '__main__':
     # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
     # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
 
-    hd = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins')#, end_date='20170401')
+
+    end_date = None#'20170401'  # smaller amount of data for prototyping/testing
+    snap_trades = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', end_date=end_date)
+    snap_bid = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='BID', end_date=end_date)
+    snap_ask = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='ASK', end_date=end_date)
+    snap_opt_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date)
+    # seems to have weird issues with short bars, and seems to be a long-term indicator
+    # snap_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='HISTORICAL_VOLATILITY', end_date='20170425')
+
+
+
     # get earliest timestamp
     # earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
 
