@@ -31,6 +31,8 @@ from threading import Thread
 
 DEFAULT_HISTORIC_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
+DEFAULT_GET_NP_ID = 42
+DEFAULT_GET_EARLIEST_ID = 1
 
 ## marker for when queue is finished
 FINISHED = object()
@@ -38,11 +40,11 @@ STARTED = object()
 TIME_OUT = object()
 
 class finishableQueue(object):
-
     def __init__(self, queue_to_finish):
 
         self._queue = queue_to_finish
         self.status = STARTED
+
 
     def get(self, timeout):
         """
@@ -72,6 +74,7 @@ class finishableQueue(object):
 
         return contents_of_queue
 
+
     def timed_out(self):
         return self.status is TIME_OUT
 
@@ -82,17 +85,19 @@ class TestWrapper(EWrapper):
     We override methods in EWrapper that will get called when this action happens, like currentTime
     Extra methods are added as we need to store the results in this object
     """
-
     def __init__(self):
         self._my_contract_details = {}
         self._my_historic_data_dict = {}
         self._my_earliest_timestamp_dict = {}
+        self._my_np_dict = {}
         self._my_errors = queue.Queue()
+
 
     ## error handling code
     def init_error(self):
         error_queue = queue.Queue()
         self._my_errors = error_queue
+
 
     def get_error(self, timeout=5):
         if self.is_error():
@@ -103,9 +108,11 @@ class TestWrapper(EWrapper):
 
         return None
 
+
     def is_error(self):
         an_error_if=not self._my_errors.empty()
         return an_error_if
+
 
     def error(self, id, errorCode, errorString):
         ## Overriden method
@@ -115,9 +122,10 @@ class TestWrapper(EWrapper):
 
     ## get contract details code
     def init_contractdetails(self, reqId):
-        contract_details_queue = self._my_contract_details[reqId] = queue.Queue()
+        self._my_contract_details[reqId] = queue.Queue()
 
-        return contract_details_queue
+        return self._my_contract_details[reqId]
+
 
     def contractDetails(self, reqId, contractDetails):
         ## overridden method
@@ -127,6 +135,7 @@ class TestWrapper(EWrapper):
 
         self._my_contract_details[reqId].put(contractDetails)
 
+
     def contractDetailsEnd(self, reqId):
         ## overriden method
         if reqId not in self._my_contract_details.keys():
@@ -134,21 +143,26 @@ class TestWrapper(EWrapper):
 
         self._my_contract_details[reqId].put(FINISHED)
 
-    ## Historic data code
-    def init_historicprices(self, tickerid):
-        historic_data_queue = self._my_historic_data_dict[tickerid] = queue.Queue()
 
-        return historic_data_queue
+    def init_historicprices(self, tickerid):
+        self._my_historic_data_dict[tickerid] = queue.Queue()
+
+        return self._my_historic_data_dict[tickerid]
 
 
     def init_earliest_timestamp(self, tickerid):
-        earliest_timestamp_queue = self._my_earliest_timestamp_dict[tickerid] = queue.Queue()
+        self._my_earliest_timestamp_dict[tickerid] = queue.Queue()
 
-        return earliest_timestamp_queue
+        return self._my_earliest_timestamp_dict[tickerid]
+
+
+    def init_np(self, tickerid):
+        self._my_np_dict[tickerid] = queue.Queue()
+
+        return self._my_np_dict[tickerid]
 
 
     def historicalData(self, tickerid , bar):
-
         ## Overriden method
         ## Note I'm choosing to ignore barCount, WAP and hasGaps but you could use them if you like
         # pprint.pprint(bar.__dict__)
@@ -164,22 +178,27 @@ class TestWrapper(EWrapper):
 
 
     def headTimestamp(self, tickerid, headTimestamp:str):
-        # overridden method
-
-        earliest_timestamp_dict = self._my_earliest_timestamp_dict
-
-        ## Add on to the current data
+        ## overridden method
         if tickerid not in earliest_timestamp_dict.keys():
             self.init_earliest_timestamp(tickerid)
 
-        earliest_timestamp_dict[tickerid].put(headTimestamp)
+        self._my_earliest_timestamp_dict[tickerid].put(headTimestamp)
 
         self._my_earliest_timestamp_dict[tickerid].put(FINISHED)
 
 
+    def newsProviders(self, newsProviders):
+        ## overridden method
+        tickerid = DEFAULT_GET_NP_ID
+        if tickerid not in self._my_np_dict.keys():
+            self.init_np(tickerid)
+
+        self._my_np_dict[tickerid].put(newsProviders)
+        self._my_np_dict[tickerid].put(FINISHED)
+
+
     def historicalDataEnd(self, tickerid, start:str, end:str):
         ## overriden method
-
         if tickerid not in self._my_historic_data_dict.keys():
             self.init_historicprices(tickerid)
 
@@ -285,8 +304,7 @@ class TestClient(EClient):
         return historic_data
 
 
-    def getEarliestTimestamp(self, contract, whatToShow='TRADES', useRTH=1, formatDate=1, tickerid=DEFAULT_HISTORIC_DATA_ID):
-        print(tickerid)
+    def getEarliestTimestamp(self, contract, whatToShow='TRADES', useRTH=1, formatDate=1, tickerid=DEFAULT_GET_EARLIEST_ID):
         # parameters: https://interactivebrokers.github.io/tws-api/classIBApi_1_1EClient.html#a059b5072d1e8e8e96394e53366eb81f3
 
         ## Make a place to store the data we're going to return
@@ -311,37 +329,27 @@ class TestClient(EClient):
         return earliest
 
 
-
     def getNewsProviders(self):
         ## Make a place to store the data we're going to return
-        historic_data_queue = finishableQueue(self.init_historicprices(tickerid))
+        tickerid = DEFAULT_GET_NP_ID
+        np_queue = finishableQueue(self.init_np(tickerid))
 
         # Request news providers. Native method in EClient
         self.reqNewsProviders()
 
-
-
         ## Wait until we get a completed data, an error, or get bored waiting
         MAX_WAIT_SECONDS = 10
-        print("Getting historical data from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+        print("Getting list of news providers from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
-        historic_data = historic_data_queue.get(timeout = MAX_WAIT_SECONDS)
+        nps = np_queue.get(timeout=MAX_WAIT_SECONDS)
 
         while self.wrapper.is_error():
             print(self.get_error())
 
-        if historic_data_queue.timed_out():
+        if np_queue.timed_out():
             print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
 
-        self.cancelHistoricalData(tickerid)
-
-        print("newsProviders: ")
-        for provider in newsProviders:
-            print(provider)
-
-
-        return newsProviders
-
+        return nps[0]  # list within a list
 
 
 class TestApp(TestWrapper, TestClient):
@@ -381,7 +389,10 @@ if __name__ == '__main__':
     # historic_data = app.get_IB_historical_data(resolved_ibcontract, durationStr="1 W", barSizeSetting="3 mins", latest_date='20180504 14:30:00')
 
     # get earliest timestamp
-    earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
+    # earliest = app.getEarliestTimestamp(resolved_ibcontract, tickerid=200)
+
+    # get list of news providers
+    nps = app.getNewsProviders()
 
     # convert to pandas dataframe
     # date, open, high, low, close, vol
