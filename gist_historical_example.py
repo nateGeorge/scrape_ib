@@ -23,7 +23,7 @@
 # limitations:
 # https://interactivebrokers.github.io/tws-api/historical_limitations.html
 
-
+import os
 import time
 import pprint
 import queue
@@ -508,7 +508,7 @@ class TestApp(TestWrapper, TestClient):
         return full_df
 
 
-    def get_stock_contract(ticker='SNAP'):
+    def get_stock_contract(self, ticker='SNAP'):
         """
         gets resolved IB contract for stocks
 
@@ -523,12 +523,12 @@ class TestApp(TestWrapper, TestClient):
         ibcontract.symbol = ticker
         ibcontract.exchange = 'ISLAND'
 
-        resolved_ibcontract = app.resolve_ib_contract(ibcontract)
+        resolved_ibcontract = self.resolve_ib_contract(ibcontract=ibcontract)
 
-        return resolve_ib_contract
+        return resolved_ibcontract
 
 
-    def download_all_history_stock(ticker='SNAP', barSizeSetting='3 mins'):
+    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins'):
         """
         downloads all historical data for a stock including
             TRADES
@@ -712,103 +712,126 @@ def check_autocorrelations():
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-    ticker = 'SNAP'
-    full_df = load_data(ticker=ticker)
-    feature_span = 30
-    feats, targs = make_features_targets(full_df, future_span=30, feature_span=feature_span)
-    feats_targs = feats.copy()
-    # make bid-ask close differences
-    # high and open seem to be most correlated
-    feats_targs['ask_bid_close'] = feats_targs['ask_close'] - feats_targs['bid_close']
-    feats_targs['ask_bid_open'] = feats_targs['ask_open'] - feats_targs['bid_open']
-    feats_targs['ask_bid_high'] = feats_targs['ask_high'] - feats_targs['bid_high']
-    feats_targs['ask_bid_low'] = feats_targs['ask_low'] - feats_targs['bid_low']
 
-    feats_targs['targets'] = targs
+    tickers = ['TSLA', 'IQ', 'AMD', 'AYX', 'LNG', 'MU', 'AAPL']
+    for t in tickers:
+        app.download_all_history_stock(ticker=t)
+
+    def snap_analysis():
+        ticker = 'SNAP'
+        full_df = load_data(ticker=ticker)
+        feature_span = 30
+        feats, targs = make_features_targets(full_df, future_span=30, feature_span=feature_span)
+        feats_targs = feats.copy()
+        # make bid-ask close differences
+        # high and open seem to be most correlated
+        feats_targs['ask_bid_close'] = feats_targs['ask_close'] - feats_targs['bid_close']
+        feats_targs['ask_bid_open'] = feats_targs['ask_open'] - feats_targs['bid_open']
+        feats_targs['ask_bid_high'] = feats_targs['ask_high'] - feats_targs['bid_high']
+        feats_targs['ask_bid_low'] = feats_targs['ask_low'] - feats_targs['bid_low']
+
+        feats_targs['targets'] = targs
 
 
-    # with future_gap=0, future_span=15, feature_span=15, intraday=True
-    #
-    # with future_span=60, feature_span=60
-    #
-    # with future_span=30, feature_span=30
-    #
+        # with future_gap=0, future_span=15, feature_span=15, intraday=True
+        #
+        # with future_span=60, feature_span=60
+        #
+        # with future_span=30, feature_span=30
+        #
 
-    import seaborn as sns
-    f = plt.figure(figsize=(12, 12))
-    sns.heatmap(feats_targs.corr())
-    plt.tight_layout()
+        import seaborn as sns
+        f = plt.figure(figsize=(12, 12))
+        sns.heatmap(feats_targs.corr())
+        plt.tight_layout()
 
-    # features that are highly correlated:
-    # OHLC with all bids and OHLC -- keep only close
-    # all bids with all bids
-    # same for OHLC and bid changes
-    # all opt_vol with each other, except high with others is a bit less correlated
-    # volume with itself and % change
-    # bid/ask with itself and each other
+        # features that are highly correlated:
+        # OHLC with all bids and OHLC -- keep only close
+        # all bids with all bids
+        # same for OHLC and bid changes
+        # all opt_vol with each other, except high with others is a bit less correlated
+        # volume with itself and % change
+        # bid/ask with itself and each other
 
-    # gets more correlated with target as time shortens
-    f = plt.figure(figsize=(12, 12))
-    sns.heatmap(feats_targs.iloc[-10000:].corr())
-    plt.tight_layout()
+        # gets more correlated with target as time shortens
+        f = plt.figure(figsize=(12, 12))
+        sns.heatmap(feats_targs.iloc[-10000:].corr())
+        plt.tight_layout()
 
-    import matplotlib.pyplot as plt
-    plt.scatter(feats['close_15_min_pct_chg'], targs)
-    plt.scatter(feats['close'], targs)
-    # when opt_vol_high is very high, seems to be highly correlated with price change over 30 mins
-    plt.scatter(feats['opt_vol_high'], targs)
-    # all on one day -- 12/09/2017
-    feats_targs[['opt_vol_high', 'targets']][feats['opt_vol_high'] > 5]
-    # nothing for opt vol low for SNAP
-    plt.scatter(feats['opt_vol_low'], targs)
+        import matplotlib.pyplot as plt
+        plt.scatter(feats['close_15_min_pct_chg'], targs)
+        plt.scatter(feats['close'], targs)
+        # when opt_vol_high is very high, seems to be highly correlated with price change over 30 mins
+        plt.scatter(feats['opt_vol_high'], targs)
+        # all on one day -- 12/09/2017
+        feats_targs[['opt_vol_high', 'targets']][feats['opt_vol_high'] > 5]
+        # nothing for opt vol low for SNAP
+        plt.scatter(feats['opt_vol_low'], targs)
 
-    targs.plot.hist(bins=30)
+        targs.plot.hist(bins=30)
 
-    from sklearn.ensemble import RandomForestRegressor
+        from sklearn.ensemble import RandomForestRegressor
 
-    # trim features
-    feats_trimmed = feats.copy()
-    fs = str(feature_span)
-    droplist = ['open',
-                'high',
-                'low',
-                'bid_open',
-                'bid_high',
-                'bid_low',
-                'bid_close',
-                'ask_open',
-                'ask_high',
-                'ask_low',
-                'ask_close',
-                'opt_vol_open',
-                'opt_vol_low',
-                'open_' + fs + '_min_pct_chg',
-                'high_' + fs + '_min_pct_chg',
-                'low_' + fs + '_min_pct_chg',
-                'bid_open_' + fs + '_min_pct_chg',
-                'bid_high_' + fs + '_min_pct_chg',
-                'bid_low_' + fs + '_min_pct_chg',
-                'bid_close_' + fs + '_min_pct_chg',
-                'ask_open_' + fs + '_min_pct_chg',
-                'ask_high_' + fs + '_min_pct_chg',
-                'ask_low_' + fs + '_min_pct_chg',
-                'ask_close_' + fs + '_min_pct_chg']
-    feats_trimmed.drop(droplist, axis=1, inplace=True)
+        # trim features
+        feats_trimmed = feats.copy()
+        fs = str(feature_span)
+        droplist = ['open',
+                    'high',
+                    'low',
+                    'close',
+                    'bid_open',
+                    'bid_high',
+                    'bid_low',
+                    'bid_close',
+                    'ask_open',
+                    'ask_high',
+                    'ask_low',
+                    'ask_close',
+                    'opt_vol_open',
+                    'opt_vol_low',
+                    'open_' + fs + '_min_pct_chg',
+                    'high_' + fs + '_min_pct_chg',
+                    'low_' + fs + '_min_pct_chg',
+                    'bid_open_' + fs + '_min_pct_chg',
+                    'bid_high_' + fs + '_min_pct_chg',
+                    'bid_low_' + fs + '_min_pct_chg',
+                    'bid_close_' + fs + '_min_pct_chg',
+                    'ask_open_' + fs + '_min_pct_chg',
+                    'ask_high_' + fs + '_min_pct_chg',
+                    'ask_low_' + fs + '_min_pct_chg',
+                    'ask_close_' + fs + '_min_pct_chg']
+        feats_trimmed.drop(droplist, axis=1, inplace=True)
 
-    train_size = 0.85
-    train_idx = int(train_size * feats_trimmed.shape[0])
-    train_feats = feats_trimmed.iloc[:train_idx]
-    train_targs = targs.iloc[:train_idx]
-    test_feats = feats_trimmed.iloc[train_idx:]
-    test_targs = targs.iloc[train_idx:]
+        # take last 25% of data -- about 2 months for SNAP currently (7-2018)
+        trim_loc = int(0.75 * feats_trimmed.shape[0])
+        feats_trimmed_small = feats_trimmed.iloc[trim_loc:]
+        targs_trimmed_small = targs.iloc[trim_loc:]
+        train_size = 0.85
+        train_idx = int(train_size * feats_trimmed_small.shape[0])
+        train_feats = feats_trimmed_small.iloc[:train_idx]
+        train_targs = targs_trimmed_small.iloc[:train_idx]
+        test_feats = feats_trimmed_small.iloc[train_idx:]
+        test_targs = targs_trimmed_small.iloc[train_idx:]
 
-    start = time.time()
-    rfr = RandomForestRegressor(n_estimators=500, n_jobs=-1, min_samples_split=10, random_state=42)
-    end = time.time()
-    rfr.fit(train_feats, train_targs)
-    print('training took:', int(start - end), 'seconds')
-    print(rfr.score(train_feats, train_targs))
-    print(rfr.score(test_feats, test_targs))
+        start = time.time()
+        rfr = RandomForestRegressor(n_estimators=500, n_jobs=-1, min_samples_split=10, random_state=42)
+        end = time.time()
+        rfr.fit(train_feats, train_targs)
+        print('training took:', int(start - end), 'seconds')
+        print(rfr.score(train_feats, train_targs))
+        print(rfr.score(test_feats, test_targs))
+        plt.scatter(train_targs, rfr.predict(train_feats))
+        plt.scatter(test_targs, rfr.predict(test_feats))
+
+        feature_importances = rfr.feature_importances_
+        fi_idx = np.argsort(feature_importances)[::-1]
+        x = np.arange(len(feature_importances))
+        f = plt.figure(figsize=(12, 12))
+        plt.bar(x, feature_importances[fi_idx])
+        plt.xticks(x, train_feats.columns[fi_idx], rotation=90)
+        plt.tight_layout()
+
+        plt.scatter(feats_trimmed_small['close'], targs_trimmed_small)
 
     #snap_contract = app.get_stock_contract(ticker='SNAP')
 
@@ -825,5 +848,7 @@ if __name__ == '__main__':
     # nps = app.getNewsProviders()
 
     # look for period with highest autocorrelation and use that as prediction period
+
+    # make a learning curve, look at scores with varying amount of data
 
     #app.disconnect()
