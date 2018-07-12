@@ -576,6 +576,12 @@ if __name__ == '__main__':
     snap_bid = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='BID', end_date=end_date)
     snap_ask = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='ASK', end_date=end_date)
     snap_opt_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date)
+
+    snap_trades.to_hdf('snap_trades.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
+    snap_bid.to_hdf('snap_bid.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
+    snap_ask.to_hdf('snap_ask.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
+    snap_opt_vol.to_hdf('snap_opt_vol.h5', key='data', format='table', complevel=9, complib='blosc:lz4')
+
     # seems to have weird issues with short bars, and seems to be a long-term indicator
     # snap_vol = app.get_hist_data_date_range(resolved_ibcontract, barSizeSetting='3 mins', whatToShow='HISTORICAL_VOLATILITY', end_date='20170425')
 
