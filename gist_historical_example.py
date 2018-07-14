@@ -33,6 +33,8 @@ from pytz import timezone
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 from ibapi.wrapper import EWrapper
 from ibapi.client import EClient
@@ -486,6 +488,8 @@ class TestApp(TestWrapper, TestClient):
                 # we've probably hit the earliest time we can get
                 if is_list >= 3 and earliest_date.date().strftime('%Y%m%d') == earliest_datestamp:
                     break
+                if is_list >= 10:
+                    break
 
                 continue
 
@@ -563,6 +567,14 @@ class TestApp(TestWrapper, TestClient):
         opt_vol.to_hdf(folder + ticker + '_opt_vol_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
 
 
+    def get_earliest_dates(self, ticker):
+        contract = self.get_stock_contract(ticker=ticker)
+        for t in ['TRADES', 'BID', 'ASK', 'OPTION_IMPLIED_VOLATILITY']:
+            earliest = self.getEarliestTimestamp(contract, tickerid=200)
+            print(t)
+            print(earliest)
+
+
 def get_datetime_from_date(date='2018-06-30'):
     """
     not sure if I need this anymore...
@@ -625,6 +637,11 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     bid = pd.read_hdf(folder + ticker + '_bid_' + bss + '.h5')
     ask = pd.read_hdf(folder + ticker + '_ask_' + bss + '.h5')
     opt_vol = pd.read_hdf(folder + ticker + '_opt_vol_' + bss + '.h5')
+    # drop duplicates just in case...dupes throw off concat
+    trades.drop_duplicates(inplace=True)
+    bid.drop_duplicates(inplace=True)
+    ask.drop_duplicates(inplace=True)
+    opt_vol.drop_duplicates(inplace=True)
     # rename columns so can join to one big dataframe
     bid.columns = ['bid_' + c for c in bid.columns]
     ask.columns = ['ask_' + c for c in ask.columns]
@@ -712,8 +729,12 @@ def check_autocorrelations():
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-
-    tickers = ['TSLA', 'IQ', 'AMD', 'AYX', 'LNG', 'MU', 'AAPL']
+    # aapl = app.get_stock_contract(ticker='AAPL')
+    # app.getEarliestTimestamp(contract=aapl, whatToShow='OPTION_IMPLIED_VOLATILITY')
+    # np.unique(df[df['opt_vol_high'] > 0.5].index.date)
+    # plt.scatter(df['opt_vol_high'], df['close'])
+    # # tickers = ['IQ', 'TSLA', 'AMD', 'AYX', 'LNG', 'MU', 'AAPL']
+    tickers = ['AAPL']
     for t in tickers:
         app.download_all_history_stock(ticker=t)
 
@@ -740,7 +761,6 @@ if __name__ == '__main__':
         # with future_span=30, feature_span=30
         #
 
-        import seaborn as sns
         f = plt.figure(figsize=(12, 12))
         sns.heatmap(feats_targs.corr())
         plt.tight_layout()
@@ -758,7 +778,6 @@ if __name__ == '__main__':
         sns.heatmap(feats_targs.iloc[-10000:].corr())
         plt.tight_layout()
 
-        import matplotlib.pyplot as plt
         plt.scatter(feats['close_15_min_pct_chg'], targs)
         plt.scatter(feats['close'], targs)
         # when opt_vol_high is very high, seems to be highly correlated with price change over 30 mins
