@@ -29,6 +29,7 @@ import pprint
 import queue
 import datetime
 from pytz import timezone
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -509,6 +510,8 @@ class TestApp(TestWrapper, TestClient):
             HISTORICAL_VOLATILITY
 
         """
+        # convert start_date string to datetime date object for comparisons
+        start_date_datetime_date = pd.to_datetime(start_date).date()
         smallbars = ['1 secs', '5 secs', '10 secs', '15 secs', '30 secs', '1 min']
         max_step_sizes = {'1 secs': '1800 S',  # 30 mins
                             '5 secs': '3600 S',  # 1 hour
@@ -544,6 +547,7 @@ class TestApp(TestWrapper, TestClient):
             # TODO: need to adopt this to other than mountain time
             latest_date = end_date + ' ' + get_close_hour_local() + ':00:00'
 
+        # list is returned if there is an error or something?
         while type(df) is list:
             df = self.get_IB_historical_data(ibcontract,
                                             whatToShow=whatToShow,
@@ -561,7 +565,7 @@ class TestApp(TestWrapper, TestClient):
         i = 0
         start_time = time.time()
         is_list = 0
-        while previous_earliest_date != earliest_date:
+        while previous_earliest_date != earliest_date and earliest_date.date() != start_date_datetime_date:
             i += 1
             print(i)
             print(previous_earliest_date)
@@ -631,15 +635,24 @@ class TestApp(TestWrapper, TestClient):
 
         if data already exists, updates and appends to it
         """
-        contract = self.get_stock_contract(ticker=ticker)
-        folder = 'data/'
+        contract, contract_details = self.get_stock_contract(ticker=ticker)
+        folder = 'data/'  # TODO: set this as a full path instead of relative
         start_date = None
         mode = 'w'
+        bss = barSizeSetting.replace(' ', '_')
+        trades_filename = folder + ticker + '_trades_' + bss + '.h5'
+        bid_filename = folder + ticker + '_bid_' + bss + '.h5'
+        ask_filename = folder + ticker + '_ask_' + bss + '.h5'
+        opt_vol_filename = folder + ticker + '_opt_vol_' + bss + '.h5'
 
-        if os.path.exists(folder + ticker + '_trades.h5'):
-            cur_trades = pd.read_hdf(ticker + '_trades.h5')
+        # TODO: provide option for which files to download;
+        # check each file individually and update individually
+        if os.path.exists(trades_filename):
+            print('trades file exists, going to append...')
+            cur_trades = pd.read_hdf(trades_filename)
             latest_datetime = cur_trades.index[-1]
             start_date = latest_datetime.strftime('%Y%m%d')
+            print('latest date is', start_date)
             mode = 'r+'  # append to existing files, should throw error if they don't exist
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
@@ -648,16 +661,25 @@ class TestApp(TestWrapper, TestClient):
         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
 
+        # write or append data
+        # TODO: function for cleaning up data and remove duplicates, sort data
+        # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
+        # if appending, get next index after latest existing datetime
+        if mode == 'r+':
+            next_idx = trades.loc[latest_datetime:].index[1]
+            trades = trades.loc[next_idx:]
+            bid = bid.loc[next_idx:]
+            ask = ask.loc[next_idx:]
+            opt_vol = opt_vol.loc[next_idx:]
 
-        bss = barSizeSetting.replace(' ', '_')
-        trades.to_hdf(folder + ticker + '_trades_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        bid.to_hdf(folder + ticker + '_bid_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        ask.to_hdf(folder + ticker + '_ask_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        opt_vol.to_hdf(folder + ticker + '_opt_vol_' + bss + '.h5', key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+        opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
 
 
     def get_earliest_dates(self, ticker):
-        contract = self.get_stock_contract(ticker=ticker)
+        contract, contract_details = self.get_stock_contract(ticker=ticker)
         for t in ['TRADES', 'BID', 'ASK', 'OPTION_IMPLIED_VOLATILITY']:
             earliest = self.getEarliestTimestamp(contract, tickerid=200)
             print(t)
@@ -713,11 +735,23 @@ def get_close_hour_local():
     return str(eastern_close.astimezone().hour)
 
 
+def get_home_dir(repo_name='scrape_ib'):
+    cwd = str(Path(__file__).resolve())
+    cwd_list = cwd.split('/')
+    repo_position = [i for i, s in enumerate(cwd_list) if s == repo_name]
+    if len(repo_position) > 1:
+        print("error!  more than one intance of repo name in path")
+        return None
+
+    home_dir = '/'.join(cwd_list[:repo_position[0] + 1]) + '/'
+    return home_dir
+
+
 def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     """
     loads historical tick data
     """
-    folder = 'data/'
+    folder = get_home_dir() + 'data/'
     bss = barSizeSetting.replace(' ', '_')
 
     trades = pd.read_hdf(folder + ticker + '_trades_' + bss + '.h5')
@@ -818,16 +852,20 @@ def check_autocorrelations():
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
-    # app.getNewsProviders()
-    aapl, aapl_details = app.get_stock_contract(ticker='AAPL', reqId=304)
-    # IBM conId = 8314
-    hn1 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='BRFG', startDateTime="", endDateTime="", totalResults=1000)
-    hn2 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='BRFUPDN', startDateTime="", endDateTime="", totalResults=1000)
-    hn3 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='DJNL', startDateTime="", endDateTime="", totalResults=1000)
+    app.download_all_history_stock(ticker='TSLA')
 
-    na1 = app.getNewsArticle(1009, providerCode='BRFG', articleId=hn1[0][2])
+    
+    def test_news():
+        # app.getNewsProviders()
+        aapl, aapl_details = app.get_stock_contract(ticker='AAPL', reqId=304)
+        # IBM conId = 8314
+        hn1 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='BRFG', startDateTime="", endDateTime="", totalResults=1000)
+        hn2 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='BRFUPDN', startDateTime="", endDateTime="", totalResults=1000)
+        hn3 = app.getHistoricalNews(reqId=DEFAULT_HISTORIC_NEWS_ID, conId=aapl.conId, providerCodes='DJNL', startDateTime="", endDateTime="", totalResults=1000)
 
-    na2 = app.getNewsArticle(1009, providerCode='BRFUPDN', articleId=hn2[0][2])
+        na1 = app.getNewsArticle(1009, providerCode='BRFG', articleId=hn1[0][2])
+
+        na2 = app.getNewsArticle(1009, providerCode='BRFUPDN', articleId=hn2[0][2])
 
     # aapl = app.get_stock_contract(ticker='AAPL')
     # app.getEarliestTimestamp(contract=aapl, whatToShow='OPTION_IMPLIED_VOLATILITY')
@@ -952,7 +990,7 @@ if __name__ == '__main__':
 
         plt.scatter(feats_trimmed_small['close'], targs_trimmed_small)
 
-    #snap_contract = app.get_stock_contract(ticker='SNAP')
+    #snap_contract, snap_details = app.get_stock_contract(ticker='SNAP')
 
     # seems to be a bit more data for 3m 1W compared with 1m 1D (650 vs 390)
     # historic_data = app.get_IB_historical_data(snap_contract, durationStr="1 D", barSizeSetting="1 min", latest_date='20170305 14:00:00')#'20180504 14:30:00')
