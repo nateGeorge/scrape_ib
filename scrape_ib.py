@@ -297,7 +297,7 @@ class TestClient(EClient):
 
         if len(new_contract_details)==0:
             print("Failed to get additional contract details: returning unresolved contract")
-            return ibcontract
+            return ibcontract, new_contract_details
 
         if len(new_contract_details)>1:
             print("got multiple contracts; using first one")
@@ -360,6 +360,7 @@ class TestClient(EClient):
         if historic_data_queue.timed_out():
             print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
 
+        # TODO: this is cancelling query early maybe?
         self.cancelHistoricalData(tickerid)
 
         # convert to pandas dataframe
@@ -511,7 +512,10 @@ class TestApp(TestWrapper, TestClient):
 
         """
         # convert start_date string to datetime date object for comparisons
-        start_date_datetime_date = pd.to_datetime(start_date).date()
+        start_date_datetime_date = -1001  # bogus number so it doesn't match df.index.date below (if not updating data)
+        if start_date is not None:
+            start_date_datetime_date = pd.to_datetime(start_date).date()
+
         smallbars = ['1 secs', '5 secs', '10 secs', '15 secs', '30 secs', '1 min']
         max_step_sizes = {'1 secs': '1800 S',  # 30 mins
                             '5 secs': '3600 S',  # 1 hour
@@ -559,13 +563,14 @@ class TestApp(TestWrapper, TestClient):
         earliest_date = df.index[0]
         full_df = df
         self.df = full_df
+        df_dates = df.index.date
 
         # keep going until the same result is returned twice...not perfectly efficient but oh well
         previous_earliest_date = None
         i = 0
         start_time = time.time()
         is_list = 0
-        while previous_earliest_date != earliest_date and earliest_date.date() != start_date_datetime_date:
+        while previous_earliest_date != earliest_date:
             i += 1
             print(i)
             print(previous_earliest_date)
@@ -580,18 +585,25 @@ class TestApp(TestWrapper, TestClient):
                 is_list += 1
                 # we've probably hit the earliest time we can get
                 if is_list >= 3 and earliest_date.date().strftime('%Y%m%d') == earliest_datestamp:
+                    print("hit earliest timestamp")
                     break
                 if is_list >= 10:
+                    print('hit 10 lists in a row')
                     break
 
+                df_dates = None
+
                 continue
-
-            previous_earliest_date = earliest_date
-            earliest_date = df.index[0]
-            full_df = pd.concat([df, full_df])
-            self.df = full_df
-            is_list = 0
-
+            else:
+                is_list = 0
+                previous_earliest_date = earliest_date
+                earliest_date = df.index[0]
+                full_df = pd.concat([df, full_df])
+                self.df = full_df
+                df_dates = df.index.date
+                if start_date_datetime_date in df_dates:
+                    print('start_date_datetime in dates, ending')
+                    break
 
             # no more than 6 requests every 2s for bars under 30s
             # https://interactivebrokers.github.io/tws-api/historical_limitations.html
@@ -600,7 +612,6 @@ class TestApp(TestWrapper, TestClient):
                 time_left = 2 - (time.time() - start_time())
                 i = 0
                 time.sleep(time_left)
-
 
         return full_df
 
@@ -772,6 +783,7 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
 
     # inner join should drop na's but just to be safe
     full_df = pd.concat([trades, bid, ask, opt_vol], axis=1, join='inner').dropna()
+    full_df.index = full_df.index.tz_localize('America/New_York')
 
     return full_df
 
@@ -852,9 +864,10 @@ def check_autocorrelations():
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
+    # TODO: update data on both sides -- new and old
     app.download_all_history_stock(ticker='TSLA')
 
-    
+
     def test_news():
         # app.getNewsProviders()
         aapl, aapl_details = app.get_stock_contract(ticker='AAPL', reqId=304)
