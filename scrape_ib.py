@@ -512,9 +512,10 @@ class TestApp(TestWrapper, TestClient):
 
         """
         # convert start_date string to datetime date object for comparisons
-        start_date_datetime_date = -1001  # bogus number so it doesn't match df.index.date below (if not updating data)
+        start_date_datetime_date = pd.to_datetime('1800-01-01').date()  # early date so it doesn't match df.index.date below (if not updating data)
         if start_date is not None:
-            start_date_datetime_date = pd.to_datetime(start_date).date()
+            # go one day past start date just to make sure we have all data
+            start_date_datetime_date = (pd.to_datetime(start_date) - pd.Timedelta('1D')).date()
 
         smallbars = ['1 secs', '5 secs', '10 secs', '15 secs', '30 secs', '1 min']
         max_step_sizes = {'1 secs': '1800 S',  # 30 mins
@@ -601,7 +602,7 @@ class TestApp(TestWrapper, TestClient):
                 full_df = pd.concat([df, full_df])
                 self.df = full_df
                 df_dates = df.index.date
-                if start_date_datetime_date in df_dates:
+                if df_dates.min() <= start_date_datetime_date:
                     print('start_date_datetime in dates, ending')
                     break
 
@@ -667,9 +668,13 @@ class TestApp(TestWrapper, TestClient):
             mode = 'r+'  # append to existing files, should throw error if they don't exist
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
+        print('\n\n\ngetting trades...\n\n\n')
         trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=start_date)
+        print('\n\n\ngetting bids...\n\n\n')
         bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=start_date)
+        print('\n\n\ngetting asks...\n\n\n')
         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+        print('\n\n\ngetting opt_vol...\n\n\n')
         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
 
         # write or append data
@@ -677,7 +682,12 @@ class TestApp(TestWrapper, TestClient):
         # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
         # if appending, get next index after latest existing datetime
         if mode == 'r+':
-            next_idx = trades.loc[latest_datetime:].index[1]
+            next_idx = trades.loc[latest_datetime:]
+            if next_idx.shape[0] <= 1 or cur_trades.iloc[-1] == trades.iloc[-1]:
+                print('already have all the data I think, exiting')
+                return
+
+            next_idx = next_idx.index[1]
             trades = trades.loc[next_idx:]
             bid = bid.loc[next_idx:]
             ask = ask.loc[next_idx:]
@@ -771,18 +781,22 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     bid = pd.read_hdf(folder + ticker + '_bid_' + bss + '.h5')
     ask = pd.read_hdf(folder + ticker + '_ask_' + bss + '.h5')
     opt_vol = pd.read_hdf(folder + ticker + '_opt_vol_' + bss + '.h5')
+
     # drop duplicates just in case...dupes throw off concat
     trades.drop_duplicates(inplace=True)
     bid.drop_duplicates(inplace=True)
     ask.drop_duplicates(inplace=True)
     opt_vol.drop_duplicates(inplace=True)
+
     # rename columns so can join to one big dataframe
     bid.columns = ['bid_' + c for c in bid.columns]
     ask.columns = ['ask_' + c for c in ask.columns]
     opt_vol.columns = ['opt_vol_' + c for c in opt_vol.columns]
 
     # inner join should drop na's but just to be safe
-    full_df = pd.concat([trades, bid, ask, opt_vol], axis=1, join='inner').dropna()
+    # opt_vol has missing values at the end of each day for some reason...
+    # so cant do inner join or dropna
+    full_df = pd.concat([trades, bid, ask, opt_vol], axis=1)#, join='inner').dropna()
     full_df.index = full_df.index.tz_localize('America/New_York')
 
     return full_df
@@ -864,8 +878,58 @@ def check_autocorrelations():
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
 
+    # test getting historical data range
+    # contract, contract_details = app.get_stock_contract('SNAP')
+    # df = app.get_hist_data_date_range(ibcontract=contract, start_date='2018-08-01')
+
     # TODO: update data on both sides -- new and old
-    app.download_all_history_stock(ticker='TSLA')
+    # tickers = ['ROKU', 'PLNT', 'BDSI', 'MTCH', 'DBX', 'FNKO', 'OSTK']
+    tickers = ['VUZI', 'TTD', 'VKTX', 'OMER', 'OLED']
+    for t in tickers:
+        print(t)
+        app.download_all_history_stock(ticker=t)
+
+# problem:
+"""
+getting opt_vol...
+
+
+
+Getting eariest timestamp from the server... could take 2 seconds to complete
+IB error id 50 errorcode 366 string No historical data query found for ticker id:50
+Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour
+---------------------------------------------------------------------------
+IndexError                                Traceback (most recent call last)
+~/github/scrape_ib/scrape_ib.py in <module>()
+    888     for t in tickers:
+    889         print(t)
+--> 890         app.download_all_history_stock(ticker=t)
+    891
+    892
+
+~/github/scrape_ib/scrape_ib.py in download_all_history_stock(self, ticker, barSizeSetting)
+    676         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+    677         print('\n\n\ngetting opt_vol...\n\n\n')
+--> 678         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
+    679
+    680         # write or append data
+
+~/github/scrape_ib/scrape_ib.py in get_hist_data_date_range(self, ibcontract, whatToShow, barSizeSetting, start_date, end_date, tickerid)
+    542
+    543         # TODO: check if earliest timestamp is nothing or before/after end_date
+--> 544         earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
+    545         earliest_datestamp = earliest_timestamp[:8]
+    546         # if timeout, will return empty list
+
+~/github/scrape_ib/scrape_ib.py in getEarliestTimestamp(self, contract, whatToShow, useRTH, formatDate, tickerid)
+    401         self.cancelHeadTimeStamp(tickerid)
+    402
+--> 403         return earliest[0]  # first element in list
+    404
+    405
+
+IndexError: list index out of range
+"""
 
 
     def test_news():
