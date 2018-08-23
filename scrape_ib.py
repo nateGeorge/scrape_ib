@@ -383,13 +383,13 @@ class TestClient(EClient):
         # parameters: https://interactivebrokers.github.io/tws-api/classIBApi_1_1EClient.html#a059b5072d1e8e8e96394e53366eb81f3
 
         ## Make a place to store the data we're going to return
-        earliest_timestamp_queue = finishableQueue(self.init_earliest_timestamp(tickerid))
 
-        self.reqHeadTimeStamp(tickerid, contract, whatToShow, useRTH, formatDate)
 
         ## Wait until we get a completed data, an error, or get bored waiting
         MAX_WAIT_SECONDS = 2
         while True:
+            earliest_timestamp_queue = finishableQueue(self.init_earliest_timestamp(tickerid))
+            self.reqHeadTimeStamp(tickerid, contract, whatToShow, useRTH, formatDate)
             print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
             earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
@@ -545,7 +545,7 @@ class TestApp(TestWrapper, TestClient):
                             '1 month': '1 Y'}
 
         # TODO: check if earliest timestamp is nothing or before/after end_date
-        earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
+        earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow, tickerid=tickerid)
         earliest_datestamp = earliest_timestamp[:8]
         # if timeout, will return empty list
         df = []
@@ -928,6 +928,9 @@ if __name__ == '__main__':
         exceptions = {}
         reqId = 100
         for t in tickers:
+            # # hard time downloading ABEV for some reason
+            # if t == 'ABEV':
+            #     continue
             # TODO: catch connection lost errors
             print(t)
             reqId += 1
