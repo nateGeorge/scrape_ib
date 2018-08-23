@@ -28,6 +28,7 @@ import time
 import pprint
 import queue
 import datetime
+import traceback
 from pytz import timezone
 from pathlib import Path
 
@@ -388,17 +389,20 @@ class TestClient(EClient):
 
         ## Wait until we get a completed data, an error, or get bored waiting
         MAX_WAIT_SECONDS = 2
-        print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+        while True:
+            print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
-        earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
+            earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
 
-        while self.wrapper.is_error():
-            print(self.get_error())
+            while self.wrapper.is_error():
+                print(self.get_error())
 
-        if earliest_timestamp_queue.timed_out():
-            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+            if earliest_timestamp_queue.timed_out():
+                print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
 
-        self.cancelHeadTimeStamp(tickerid)
+            self.cancelHeadTimeStamp(tickerid)
+            if len(earliest) != 0:
+                break
 
         return earliest[0]  # first element in list
 
@@ -637,7 +641,7 @@ class TestApp(TestWrapper, TestClient):
         return resolved_ibcontract, contract_details
 
 
-    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins'):
+    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID):
         """
         downloads all historical data for a stock including
             TRADES
@@ -647,9 +651,12 @@ class TestApp(TestWrapper, TestClient):
 
         if data already exists, updates and appends to it
         """
-        contract, contract_details = self.get_stock_contract(ticker=ticker)
+        contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
         folder = 'data/'  # TODO: set this as a full path instead of relative
-        start_date = None
+        trades_start_date = None
+        bids_start_date = None
+        asks_start_date = None
+        opt_vol_start_date = None
         mode = 'w'
         bss = barSizeSetting.replace(' ', '_')
         trades_filename = folder + ticker + '_trades_' + bss + '.h5'
@@ -662,41 +669,65 @@ class TestApp(TestWrapper, TestClient):
         if os.path.exists(trades_filename):
             print('trades file exists, going to append...')
             cur_trades = pd.read_hdf(trades_filename)
-            latest_datetime = cur_trades.index[-1]
-            start_date = latest_datetime.strftime('%Y%m%d')
-            print('latest date is', start_date)
+            cur_bids = pd.read_hdf(bid_filename)
+            cur_asks = pd.read_hdf(ask_filename)
+            cur_opt_vol = pd.read_hdf(opt_vol_filename)
+
+            latest_trades_datetime = cur_trades.index[-1]
+            trades_start_date = latest_trades_datetime.strftime('%Y%m%d')
+
+            latest_bids_datetime = cur_bids.index[-1]
+            bids_start_date = latest_bids_datetime.strftime('%Y%m%d')
+
+            latest_asks_datetime = cur_asks.index[-1]
+            asks_start_date = latest_asks_datetime.strftime('%Y%m%d')
+
+            latest_opt_vol_datetime = cur_opt_vol.index[-1]
+            opt_vol_start_date = latest_opt_vol_datetime.strftime('%Y%m%d')
+            print('latest date is around', trades_start_date)
             mode = 'r+'  # append to existing files, should throw error if they don't exist
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
         print('\n\n\ngetting trades...\n\n\n')
-        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=start_date)
+        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=trades_start_date, tickerid=reqId)
         print('\n\n\ngetting bids...\n\n\n')
-        bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=start_date)
+        bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=bids_start_date, tickerid=reqId)
         print('\n\n\ngetting asks...\n\n\n')
-        ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+        ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=asks_start_date, tickerid=reqId)
         print('\n\n\ngetting opt_vol...\n\n\n')
-        opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
+        opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=opt_vol_start_date, tickerid=reqId)
 
         # write or append data
         # TODO: function for cleaning up data and remove duplicates, sort data
         # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
         # if appending, get next index after latest existing datetime
+        append = False  # need to set option in to_hdf
         if mode == 'r+':
-            next_idx = trades.loc[latest_datetime:]
-            if next_idx.shape[0] <= 1 or cur_trades.iloc[-1] == trades.iloc[-1]:
+            next_trades_idx = trades.loc[latest_trades_datetime:]
+            if next_trades_idx.shape[0] <= 1 or cur_trades.iloc[-1].equals(trades.iloc[-1]):
                 print('already have all the data I think, exiting')
                 return
 
-            next_idx = next_idx.index[1]
-            trades = trades.loc[next_idx:]
-            bid = bid.loc[next_idx:]
-            ask = ask.loc[next_idx:]
-            opt_vol = opt_vol.loc[next_idx:]
+            next_trades_idx = next_trades_idx.index[1]
+            trades = trades.loc[next_trades_idx:]
 
-        trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
-        opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode)
+            next_bids_idx = bid.loc[latest_bids_datetime:]
+            next_bids_idx = next_bids_idx.index[1]
+            bid = bid.loc[next_bids_idx:]
+
+            next_asks_idx = ask.loc[latest_asks_datetime:]
+            next_asks_idx = next_asks_idx.index[1]
+            ask = ask.loc[next_asks_idx:]
+
+            next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
+            next_opt_vol_idx = next_opt_vol_idx.index[1]
+            opt_vol = opt_vol.loc[next_opt_vol_idx:]
+            append = True
+
+        trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
+        bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
+        ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
+        opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
 
 
     def get_earliest_dates(self, ticker):
@@ -883,53 +914,72 @@ if __name__ == '__main__':
     # df = app.get_hist_data_date_range(ibcontract=contract, start_date='2018-08-01')
 
     # TODO: update data on both sides -- new and old
-    # tickers = ['ROKU', 'PLNT', 'BDSI', 'MTCH', 'DBX', 'FNKO', 'OSTK']
-    tickers = ['VUZI', 'TTD', 'VKTX', 'OMER', 'OLED']
-    for t in tickers:
-        print(t)
-        app.download_all_history_stock(ticker=t)
+    # tickers that have data back to earliest date
+    # 'VUZI',    'TVIX', 'OSTK'
+    # tickers = ['IQ']
 
-# problem:
-"""
-getting opt_vol...
+    def download_lots_of_stocks():
+        import sys
+        sys.path.append('../stocks_emotional_analysis/stocktwits')
+        import get_st_data as  gs
+
+        tickers = gs.get_stock_watchlist(update=False)
+
+        exceptions = {}
+        reqId = 100
+        for t in tickers:
+            # TODO: catch connection lost errors
+            print(t)
+            reqId += 1
+            try:
+                app.download_all_history_stock(ticker=t, reqId=reqId)
+            except Exception as e:
+                print(e)
+                exceptions[t] = e
+                traceback.print_tb(e.__traceback__)
+                continue
+
+    # problem with VUZI:
+    """
+    getting opt_vol...
 
 
 
-Getting eariest timestamp from the server... could take 2 seconds to complete
-IB error id 50 errorcode 366 string No historical data query found for ticker id:50
-Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour
----------------------------------------------------------------------------
-IndexError                                Traceback (most recent call last)
-~/github/scrape_ib/scrape_ib.py in <module>()
-    888     for t in tickers:
-    889         print(t)
---> 890         app.download_all_history_stock(ticker=t)
-    891
-    892
+    Getting eariest timestamp from the server... could take 2 seconds to complete
+    IB error id 50 errorcode 366 string No historical data query found for ticker id:50
+    Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour
+    ---------------------------------------------------------------------------
+    IndexError                                Traceback (most recent call last)
+    ~/github/scrape_ib/scrape_ib.py in <module>()
+        888     for t in tickers:
+        889         print(t)
+    --> 890         app.download_all_history_stock(ticker=t)
+        891
+        892
 
-~/github/scrape_ib/scrape_ib.py in download_all_history_stock(self, ticker, barSizeSetting)
-    676         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
-    677         print('\n\n\ngetting opt_vol...\n\n\n')
---> 678         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
-    679
-    680         # write or append data
+    ~/github/scrape_ib/scrape_ib.py in download_all_history_stock(self, ticker, barSizeSetting)
+        676         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=start_date)
+        677         print('\n\n\ngetting opt_vol...\n\n\n')
+    --> 678         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=start_date)
+        679
+        680         # write or append data
 
-~/github/scrape_ib/scrape_ib.py in get_hist_data_date_range(self, ibcontract, whatToShow, barSizeSetting, start_date, end_date, tickerid)
-    542
-    543         # TODO: check if earliest timestamp is nothing or before/after end_date
---> 544         earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
-    545         earliest_datestamp = earliest_timestamp[:8]
-    546         # if timeout, will return empty list
+    ~/github/scrape_ib/scrape_ib.py in get_hist_data_date_range(self, ibcontract, whatToShow, barSizeSetting, start_date, end_date, tickerid)
+        542
+        543         # TODO: check if earliest timestamp is nothing or before/after end_date
+    --> 544         earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow)
+        545         earliest_datestamp = earliest_timestamp[:8]
+        546         # if timeout, will return empty list
 
-~/github/scrape_ib/scrape_ib.py in getEarliestTimestamp(self, contract, whatToShow, useRTH, formatDate, tickerid)
-    401         self.cancelHeadTimeStamp(tickerid)
-    402
---> 403         return earliest[0]  # first element in list
-    404
-    405
+    ~/github/scrape_ib/scrape_ib.py in getEarliestTimestamp(self, contract, whatToShow, useRTH, formatDate, tickerid)
+        401         self.cancelHeadTimeStamp(tickerid)
+        402
+    --> 403         return earliest[0]  # first element in list
+        404
+        405
 
-IndexError: list index out of range
-"""
+    IndexError: list index out of range
+    """
 
 
     def test_news():
