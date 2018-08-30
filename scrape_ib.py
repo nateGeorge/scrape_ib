@@ -356,7 +356,11 @@ class TestClient(EClient):
         historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
 
         while self.wrapper.is_error():
-            print(self.get_error())
+            er = self.get_error()
+            print(er)
+            if "HMDS query returned no data" in er:
+                print(historic_data)
+                print(historic_data is None)
 
         if historic_data_queue.timed_out():
             print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
@@ -387,21 +391,28 @@ class TestClient(EClient):
 
         ## Wait until we get a completed data, an error, or get bored waiting
         MAX_WAIT_SECONDS = 2
+        tries = 0
         while True:
+            tries += 1
             earliest_timestamp_queue = finishableQueue(self.init_earliest_timestamp(tickerid))
             self.reqHeadTimeStamp(tickerid, contract, whatToShow, useRTH, formatDate)
-            print("Getting eariest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+            print("Getting earliest timestamp from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
             earliest = earliest_timestamp_queue.get(timeout=MAX_WAIT_SECONDS)
 
             while self.wrapper.is_error():
-                print(self.get_error())
+                er = self.get_error()
+                print(er)
+                if 'No head time stamp' in er:
+                    return None
+                    break
 
             if earliest_timestamp_queue.timed_out():
                 print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
 
             self.cancelHeadTimeStamp(tickerid)
-            if len(earliest) != 0:
+            if len(earliest) != 0 or tries == 20:
+                return None
                 break
 
         return earliest[0]  # first element in list
@@ -546,7 +557,8 @@ class TestApp(TestWrapper, TestClient):
 
         # TODO: check if earliest timestamp is nothing or before/after end_date
         earliest_timestamp = self.getEarliestTimestamp(ibcontract, whatToShow=whatToShow, tickerid=tickerid)
-        earliest_datestamp = earliest_timestamp[:8]
+        if earliest_timestamp is not None:
+            earliest_datestamp = earliest_timestamp[:8]
         # if timeout, will return empty list
         df = []
 
@@ -557,13 +569,18 @@ class TestApp(TestWrapper, TestClient):
             latest_date = end_date + ' ' + get_close_hour_local() + ':00:00'
 
         # list is returned if there is an error or something?
+        tries = 0
         while type(df) is list:
+            tries += 1
             df = self.get_IB_historical_data(ibcontract,
                                             whatToShow=whatToShow,
                                             durationStr=max_step_sizes[barSizeSetting],
                                             barSizeSetting=barSizeSetting,
                                             tickerid=tickerid,
                                             latest_date=latest_date)
+            if tries == 10:
+                print('tried to get historic data 10x and failed, retutrning None')
+                return None
 
         earliest_date = df.index[0]
         full_df = df
@@ -580,6 +597,7 @@ class TestApp(TestWrapper, TestClient):
             print(i)
             print(previous_earliest_date)
             print(earliest_date)
+            # TODO: if "HMDS query returned no data" in error lots of times, maybe finish it
             df = self.get_IB_historical_data(ibcontract,
                                             whatToShow=whatToShow,
                                             durationStr=max_step_sizes[barSizeSetting],
@@ -589,9 +607,10 @@ class TestApp(TestWrapper, TestClient):
             if type(df) is list:
                 is_list += 1
                 # we've probably hit the earliest time we can get
-                if is_list >= 3 and earliest_date.date().strftime('%Y%m%d') == earliest_datestamp:
-                    print("hit earliest timestamp")
-                    break
+                if earliest_timestamp is not None:
+                    if is_list >= 3 and earliest_date.date().strftime('%Y%m%d') == earliest_datestamp:
+                        print("hit earliest timestamp")
+                        break
                 if is_list >= 10:
                     print('hit 10 lists in a row')
                     break
@@ -918,19 +937,32 @@ if __name__ == '__main__':
     # 'VUZI',    'TVIX', 'OSTK'
     # tickers = ['IQ']
 
-    def download_lots_of_stocks():
+    def download_lots_of_stocks(update=False):
+        # TODO: skip stocks fully up-to-date
+        # deal with missing tickers, e.g. DJIA
+        # DJIA
+        # Getting full contract details from the server...
+        # IB error id 122 errorcode 366 string No historical data query found for ticker id:122
+        # IB error id 123 errorcode 200 string No security definition has been found for the request
+
         import sys
         sys.path.append('../stocks_emotional_analysis/stocktwits')
         import get_st_data as  gs
 
-        tickers = gs.get_stock_watchlist(update=False)
+        tickers = gs.get_stock_watchlist(update=update)
 
         exceptions = {}
         reqId = 100
         for t in tickers:
-            # # hard time downloading ABEV for some reason
-            # if t == 'ABEV':
-            #     continue
+            # IB error id 107 errorcode 162 string Historical Market Data Service error message:HMDS query returned no data: AQ@ISLAND Option_Implied_Volatility
+            # Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour
+            # Getting historical data from the server... could take 5 seconds to complete
+            # IB error id 107 errorcode 366 string No historical data query found for ticker id:107
+            # IB error id 107 errorcode 162 string Historical Market Data Service error message:HMDS query returned no data: AQ@ISLAND Option_Implied_Volatility
+            # Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour
+
+            if t in ['BTC.X', 'ETH.X'] or '.X' in t:  # e.g. DASH.X ... I think all crypto ends in .X
+                continue
             # TODO: catch connection lost errors
             print(t)
             reqId += 1
