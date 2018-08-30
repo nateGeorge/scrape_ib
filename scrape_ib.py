@@ -671,7 +671,7 @@ class TestApp(TestWrapper, TestClient):
         if data already exists, updates and appends to it
         """
         contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
-        folder = 'data/'  # TODO: set this as a full path instead of relative
+        folder = '/home/nate/Dropbox/data/ib/data/'
         trades_start_date = None
         bids_start_date = None
         asks_start_date = None
@@ -926,7 +926,8 @@ def check_autocorrelations():
 
 
 def backup_data():
-    # files = 
+    # files =
+    pass
 
 if __name__ == '__main__':
     app = TestApp("127.0.0.1", 7496, 1)
