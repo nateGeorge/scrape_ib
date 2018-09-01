@@ -676,7 +676,11 @@ class TestApp(TestWrapper, TestClient):
         bids_start_date = None
         asks_start_date = None
         opt_vol_start_date = None
-        mode = 'w'
+        tr_mode = 'w'
+        bid_mode = 'w'
+        ask_mode = 'w'
+        opt_vol_mode = 'w'
+
         bss = barSizeSetting.replace(' ', '_')
         trades_filename = folder + ticker + '_trades_' + bss + '.h5'
         bid_filename = folder + ticker + '_bid_' + bss + '.h5'
@@ -688,23 +692,34 @@ class TestApp(TestWrapper, TestClient):
         if os.path.exists(trades_filename):
             print('trades file exists, going to append...')
             cur_trades = pd.read_hdf(trades_filename)
-            cur_bids = pd.read_hdf(bid_filename)
-            cur_asks = pd.read_hdf(ask_filename)
-            cur_opt_vol = pd.read_hdf(opt_vol_filename)
 
             latest_trades_datetime = cur_trades.index[-1]
             trades_start_date = latest_trades_datetime.strftime('%Y%m%d')
+            tr_mode = 'r+'
+            print('latest trades date is', trades_start_date)
 
+        if os.path.exists(bid_filename):
+            print('bids file exists, going to append')
+            cur_bids = pd.read_hdf(bid_filename)
             latest_bids_datetime = cur_bids.index[-1]
             bids_start_date = latest_bids_datetime.strftime('%Y%m%d')
+            bid_mode='r+'
 
+        if os.path.exists(ask_filename):
+            print('asks filename exists, going to append')
+            cur_asks = pd.read_hdf(ask_filename)
             latest_asks_datetime = cur_asks.index[-1]
             asks_start_date = latest_asks_datetime.strftime('%Y%m%d')
+            ask_mode='r+'
 
+        if os.path.exists(opt_vol_filename):
+            print('opt_vol  file exists, gonna append')
+            cur_opt_vol = pd.read_hdf(opt_vol_filename)
             latest_opt_vol_datetime = cur_opt_vol.index[-1]
             opt_vol_start_date = latest_opt_vol_datetime.strftime('%Y%m%d')
-            print('latest date is around', trades_start_date)
-            mode = 'r+'  # append to existing files, should throw error if they don't exist
+            opt_volmode = 'r+'  # append to existing files, should throw error if they don't exist
+
+
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
         print('\n\n\ngetting trades...\n\n\n')
@@ -720,33 +735,51 @@ class TestApp(TestWrapper, TestClient):
         # TODO: function for cleaning up data and remove duplicates, sort data
         # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
         # if appending, get next index after latest existing datetime
-        append = False  # need to set option in to_hdf
-        if mode == 'r+':
+        tr_append = False  # need to set option in to_hdf
+        bid_append = False
+        ask_append = False
+        opt_vol_append = False
+        if tr_mode == 'r+':
             next_trades_idx = trades.loc[latest_trades_datetime:]
             if next_trades_idx.shape[0] <= 1 or cur_trades.iloc[-1].equals(trades.iloc[-1]):
-                print('already have all the data I think, exiting')
-                return
+                print('already have all the data I think for trades')
+                # return
+            else:
+                next_trades_idx = next_trades_idx.index[1]
+                trades = trades.loc[next_trades_idx:]
+                tr_append=True
+                trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
 
-            next_trades_idx = next_trades_idx.index[1]
-            trades = trades.loc[next_trades_idx:]
-
+        if bid_mode == 'r+':
             next_bids_idx = bid.loc[latest_bids_datetime:]
-            next_bids_idx = next_bids_idx.index[1]
-            bid = bid.loc[next_bids_idx:]
+            if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bids.iloc[-1]):
+                print('already have all bids data I think')
+            else:
+                next_bids_idx = next_bids_idx.index[1]
+                bid = bid.loc[next_bids_idx:]
+                bid_append=True
+                bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
 
+        if ask_mode == 'r+':
             next_asks_idx = ask.loc[latest_asks_datetime:]
-            next_asks_idx = next_asks_idx.index[1]
-            ask = ask.loc[next_asks_idx:]
+            if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(asks.iloc[-1]):
+                print('already have all asks data I think')
+            else:
+                ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
+                next_asks_idx = next_asks_idx.index[1]
+                ask = ask.loc[next_asks_idx:]
+                ask_append = True
 
+        if opt_vol_mode == 'r+':
             next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
-            next_opt_vol_idx = next_opt_vol_idx.index[1]
-            opt_vol = opt_vol.loc[next_opt_vol_idx:]
-            append = True
+            if next_opt_vol_idx.shape[0] <= 1 or cur_opt_vol.iloc[-1].equals(opt_vol.iloc[-1]):
+                print('already have all opt_vol data I think')
+            else:
+                next_opt_vol_idx = next_opt_vol_idx.index[1]
+                opt_vol = opt_vol.loc[next_opt_vol_idx:]
+                opt_vol_append = True
+                opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
 
-        trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
-        bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
-        ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
-        opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=mode, append=append)
 
 
     def get_earliest_dates(self, ticker):
@@ -822,7 +855,8 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     """
     loads historical tick data
     """
-    folder = get_home_dir() + 'data/'
+    # folder = get_home_dir() + 'data/'
+    folder = '/home/nate/Dropbox/data/ib/data/'
     bss = barSizeSetting.replace(' ', '_')
 
     trades = pd.read_hdf(folder + ticker + '_trades_' + bss + '.h5')
