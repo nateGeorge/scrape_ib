@@ -713,11 +713,11 @@ class TestApp(TestWrapper, TestClient):
             ask_mode='r+'
 
         if os.path.exists(opt_vol_filename):
-            print('opt_vol  file exists, gonna append')
+            print('opt_vol file exists, gonna append')
             cur_opt_vol = pd.read_hdf(opt_vol_filename)
             latest_opt_vol_datetime = cur_opt_vol.index[-1]
             opt_vol_start_date = latest_opt_vol_datetime.strftime('%Y%m%d')
-            opt_volmode = 'r+'  # append to existing files, should throw error if they don't exist
+            opt_vol_mode = 'r+'  # append to existing files, should throw error if they don't exist
 
 
 
@@ -749,28 +749,36 @@ class TestApp(TestWrapper, TestClient):
                 trades = trades.loc[next_trades_idx:]
                 tr_append=True
                 trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
+        else:
+            trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
 
         if bid_mode == 'r+':
             next_bids_idx = bid.loc[latest_bids_datetime:]
-            if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bids.iloc[-1]):
+            if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bid.iloc[-1]):
                 print('already have all bids data I think')
             else:
                 next_bids_idx = next_bids_idx.index[1]
                 bid = bid.loc[next_bids_idx:]
                 bid_append=True
                 bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
+        else:
+            bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
 
         if ask_mode == 'r+':
             next_asks_idx = ask.loc[latest_asks_datetime:]
-            if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(asks.iloc[-1]):
+            if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(ask.iloc[-1]):
                 print('already have all asks data I think')
             else:
-                ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
                 next_asks_idx = next_asks_idx.index[1]
                 ask = ask.loc[next_asks_idx:]
                 ask_append = True
+                ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
+        else:
+            ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
 
         if opt_vol_mode == 'r+':
+
+            # TODO: doesn't seem to be working properly for opt_vol, seems to append every time
             next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
             if next_opt_vol_idx.shape[0] <= 1 or cur_opt_vol.iloc[-1].equals(opt_vol.iloc[-1]):
                 print('already have all opt_vol data I think')
@@ -779,6 +787,8 @@ class TestApp(TestWrapper, TestClient):
                 opt_vol = opt_vol.loc[next_opt_vol_idx:]
                 opt_vol_append = True
                 opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
+        else:
+            opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
 
 
 
