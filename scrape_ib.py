@@ -724,12 +724,6 @@ class TestApp(TestWrapper, TestClient):
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
         print('\n\n\ngetting trades...\n\n\n')
         trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=trades_start_date, tickerid=reqId)
-        print('\n\n\ngetting bids...\n\n\n')
-        bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=bids_start_date, tickerid=reqId)
-        print('\n\n\ngetting asks...\n\n\n')
-        ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=asks_start_date, tickerid=reqId)
-        print('\n\n\ngetting opt_vol...\n\n\n')
-        opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=opt_vol_start_date, tickerid=reqId)
 
         # write or append data
         # TODO: function for cleaning up data and remove duplicates, sort data
@@ -752,6 +746,8 @@ class TestApp(TestWrapper, TestClient):
         else:
             trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
 
+        print('\n\n\ngetting bids...\n\n\n')
+        bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=bids_start_date, tickerid=reqId)
         if bid_mode == 'r+':
             next_bids_idx = bid.loc[latest_bids_datetime:]
             if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bid.iloc[-1]):
@@ -764,6 +760,8 @@ class TestApp(TestWrapper, TestClient):
         else:
             bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
 
+        print('\n\n\ngetting asks...\n\n\n')
+        ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=asks_start_date, tickerid=reqId)
         if ask_mode == 'r+':
             next_asks_idx = ask.loc[latest_asks_datetime:]
             if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(ask.iloc[-1]):
@@ -776,8 +774,9 @@ class TestApp(TestWrapper, TestClient):
         else:
             ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
 
+        print('\n\n\ngetting opt_vol...\n\n\n')
+        opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=opt_vol_start_date, tickerid=reqId)
         if opt_vol_mode == 'r+':
-
             # TODO: doesn't seem to be working properly for opt_vol, seems to append every time
             next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
             if next_opt_vol_idx.shape[0] <= 1 or cur_opt_vol.iloc[-1].equals(opt_vol.iloc[-1]):
