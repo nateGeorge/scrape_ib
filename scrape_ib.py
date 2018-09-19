@@ -312,7 +312,7 @@ class TestClient(EClient):
 
     def get_IB_historical_data(self,
                                 ibcontract,
-                                whatToShow="TRADES",
+                                whatToShow="ADJUSTED_LAST",
                                 durationStr="1 Y",
                                 barSizeSetting="1 day",
                                 tickerid=DEFAULT_HISTORIC_DATA_ID,
@@ -374,7 +374,7 @@ class TestClient(EClient):
         if len(historic_data) != 0:
             df = pd.DataFrame.from_records(data=historic_data, index='datetime', columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df.index = pd.to_datetime(df.index)
-            if whatToShow != 'TRADES':
+            if whatToShow not in ['TRADES', 'ADJUSTED_LAST']:
                 # volume only available for trades
                 df.drop('volume', axis=1, inplace=True)
 
@@ -383,7 +383,7 @@ class TestClient(EClient):
             return historic_data
 
 
-    def getEarliestTimestamp(self, contract, whatToShow='TRADES', useRTH=1, formatDate=1, tickerid=DEFAULT_GET_EARLIEST_ID):
+    def getEarliestTimestamp(self, contract, whatToShow='ADJUSTED_LAST', useRTH=1, formatDate=1, tickerid=DEFAULT_GET_EARLIEST_ID):
         # parameters: https://interactivebrokers.github.io/tws-api/classIBApi_1_1EClient.html#a059b5072d1e8e8e96394e53366eb81f3
 
         ## Make a place to store the data we're going to return
@@ -504,7 +504,7 @@ class TestApp(TestWrapper, TestClient):
 
     def get_hist_data_date_range(self,
                                 ibcontract,
-                                whatToShow='TRADES',
+                                whatToShow='ADJUSTED_LAST',
                                 barSizeSetting='3 mins',
                                 start_date=None,
                                 end_date=None,
@@ -519,7 +519,8 @@ class TestApp(TestWrapper, TestClient):
         start_date and end_date should be strings in format YYYYMMDD
 
         useful options for whatToShow for stocks can be:
-            TRADES
+            ADJUSTED_LAST (adj for splits and dividends)
+            TRADES (only adjusted for splits)
             BID
             ASK
             OPTION_IMPLIED_VOLATILITY
@@ -663,7 +664,7 @@ class TestApp(TestWrapper, TestClient):
     def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID):
         """
         downloads all historical data for a stock including
-            TRADES
+            ADJUSTED_LAST
             BID
             ASK
             OPTION_IMPLIED_VOLATILITY
@@ -723,7 +724,7 @@ class TestApp(TestWrapper, TestClient):
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
         print('\n\n\ngetting trades...\n\n\n')
-        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, end_date=end_date, start_date=trades_start_date, tickerid=reqId)
+        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ADJUSTED_LAST', end_date=end_date, start_date=trades_start_date, tickerid=reqId)
 
         # write or append data
         # TODO: function for cleaning up data and remove duplicates, sort data
@@ -793,7 +794,7 @@ class TestApp(TestWrapper, TestClient):
 
     def get_earliest_dates(self, ticker):
         contract, contract_details = self.get_stock_contract(ticker=ticker)
-        for t in ['TRADES', 'BID', 'ASK', 'OPTION_IMPLIED_VOLATILITY']:
+        for t in ['ADJUSTED_LAST', 'BID', 'ASK', 'OPTION_IMPLIED_VOLATILITY']:
             earliest = self.getEarliestTimestamp(contract, tickerid=200)
             print(t)
             print(earliest)
@@ -1014,7 +1015,7 @@ if __name__ == '__main__':
             print(t)
             reqId += 1
             try:
-                app.download_all_history_stock(ticker=t, reqId=reqId)
+                app.download_all_history_stock(ticker=t, reqId=reqId, barSizeSetting='1 day')
             except Exception as e:
                 print(e)
                 exceptions[t] = e
