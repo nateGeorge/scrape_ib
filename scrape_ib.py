@@ -881,6 +881,17 @@ def load_data(ticker='SNAP', barSizeSetting='3 mins'):
     ask.drop_duplicates(inplace=True)
     opt_vol.drop_duplicates(inplace=True)
 
+    # sometimes with dupes, index is no longer sorted
+    trades.sort_index(inplace=True)
+    bid.sort_index(inplace=True)
+    ask.sort_index(inplace=True)
+    opt_vol.sort_index(inplace=True)
+
+    # TODO: find opt_vol and other files with problems
+    # e.g. found BOX opt_vol file had some price data in it
+    # look for outliers or matches within other DFs, then delete messed up DFs
+
+
     # rename columns so can join to one big dataframe
     bid.columns = ['bid_' + c for c in bid.columns]
     ask.columns = ['ask_' + c for c in ask.columns]
@@ -1218,3 +1229,7 @@ if __name__ == '__main__':
     # make a learning curve, look at scores with varying amount of data
 
     #app.disconnect()
+
+
+    # TODO: fill in missing data in existing data and clean up
+    # check if missing values in data are real or a mistake: e.g. ABBV at '2018-08-28 10:57:00-04:00'
