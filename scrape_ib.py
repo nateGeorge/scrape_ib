@@ -504,7 +504,7 @@ class TestApp(TestWrapper, TestClient):
 
     def get_hist_data_date_range(self,
                                 ibcontract,
-                                whatToShow='ADJUSTED_LAST',
+                                whatToShow='TRADES',
                                 barSizeSetting='3 mins',
                                 start_date=None,
                                 end_date=None,
@@ -661,18 +661,25 @@ class TestApp(TestWrapper, TestClient):
         return resolved_ibcontract, contract_details
 
 
-    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID):
+    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID, what='TRADES'):
         """
         downloads all historical data for a stock including
-            ADJUSTED_LAST
+            TRADES or ADJUSTED_LAST
             BID
             ASK
             OPTION_IMPLIED_VOLATILITY
 
         if data already exists, updates and appends to it
+
+        'what' parameter can be 'ADJUSTED_LAST' or 'TRADES'.
+        ADJUSTED_LAST is the dividend-adjusted prices; trades is only split-adjusted
         """
         contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
-        folder = '/home/nate/Dropbox/data/ib/data/'
+        if what == 'TRADES':
+            folder = '/home/nate/Dropbox/data/ib_full_adj/data/'
+        elif what == 'ADJUSTED_LAST':
+            folder = '/home/nate/Dropbox/data/ib_split_adj_only/data/'
+
         trades_start_date = None
         bids_start_date = None
         asks_start_date = None
@@ -724,7 +731,7 @@ class TestApp(TestWrapper, TestClient):
 
         end_date = None#'20170401'  # smaller amount of data for prototyping/testing
         print('\n\n\ngetting trades...\n\n\n')
-        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ADJUSTED_LAST', end_date=end_date, start_date=trades_start_date, tickerid=reqId)
+        trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow=what, end_date=end_date, start_date=trades_start_date, tickerid=reqId)
 
         # write or append data
         # TODO: function for cleaning up data and remove duplicates, sort data
@@ -1006,6 +1013,8 @@ if __name__ == '__main__':
 
         import sys
         sys.path.append('../stocks_emotional_analysis/stocktwits')
+        # hack to be able to import dl_quandl_EOD.py in get_st_data
+        sys.path.append('../stock_prediction/code')
         import get_st_data as  gs
 
         tickers = gs.get_stock_watchlist(update=update)
@@ -1026,7 +1035,7 @@ if __name__ == '__main__':
             print(t)
             reqId += 1
             try:
-                app.download_all_history_stock(ticker=t, reqId=reqId, barSizeSetting='1 day')
+                app.download_all_history_stock(ticker=t, reqId=reqId, barSizeSetting='3 mins')
             except Exception as e:
                 print(e)
                 exceptions[t] = e
