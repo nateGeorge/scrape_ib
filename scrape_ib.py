@@ -351,19 +351,28 @@ class TestClient(EClient):
 
         ## Wait until we get a completed data, an error, or get bored waiting
         MAX_WAIT_SECONDS = 5
-        print("Getting historical data from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
+        while True:
+            print("Getting historical data from the server... could take %d seconds to complete " % MAX_WAIT_SECONDS)
 
-        historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
+            historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
 
-        while self.wrapper.is_error():
-            er = self.get_error()
-            print(er)
-            if "HMDS query returned no data" in er:
-                print(historic_data)
-                print(historic_data is None)
+            while self.wrapper.is_error():
+                er = self.get_error()
+                print(er)
+                if 'Not connected' in er:
+                    print('sleeping 30s to wait for reconnection; suggest restarting TWS')
+                    time.sleep(30)
 
-        if historic_data_queue.timed_out():
-            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+                if "HMDS query returned no data" in er:
+                    print(historic_data)
+                    print(historic_data is None)
+
+            if historic_data_queue.timed_out() and er is None:
+                print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+
+            # only keep trying if not connected
+            if not 'Not connected' in er:
+                break
 
         # TODO: this is cancelling query early maybe?
         self.cancelHistoricalData(tickerid)
@@ -733,69 +742,73 @@ class TestApp(TestWrapper, TestClient):
         print('\n\n\ngetting trades...\n\n\n')
         trades = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow=what, end_date=end_date, start_date=trades_start_date, tickerid=reqId)
 
-        # write or append data
-        # TODO: function for cleaning up data and remove duplicates, sort data
-        # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
-        # if appending, get next index after latest existing datetime
-        tr_append = False  # need to set option in to_hdf
-        bid_append = False
-        ask_append = False
-        opt_vol_append = False
-        if tr_mode == 'r+':
-            next_trades_idx = trades.loc[latest_trades_datetime:]
-            if next_trades_idx.shape[0] <= 1 or cur_trades.iloc[-1].equals(trades.iloc[-1]):
-                print('already have all the data I think for trades')
-                # return
+        if trades is not None:
+            # write or append data
+            # TODO: function for cleaning up data and remove duplicates, sort data
+            # TODO: only append things after the latest datetime, and do it for trades, bid, etc separately
+            # if appending, get next index after latest existing datetime
+            tr_append = False  # need to set option in to_hdf
+            bid_append = False
+            ask_append = False
+            opt_vol_append = False
+            if tr_mode == 'r+':
+                next_trades_idx = trades.loc[latest_trades_datetime:]
+                if next_trades_idx.shape[0] <= 1 or cur_trades.iloc[-1].equals(trades.iloc[-1]):
+                    print('already have all the data I think for trades')
+                    # return
+                else:
+                    next_trades_idx = next_trades_idx.index[1]
+                    trades = trades.loc[next_trades_idx:]
+                    tr_append=True
+                    trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
             else:
-                next_trades_idx = next_trades_idx.index[1]
-                trades = trades.loc[next_trades_idx:]
-                tr_append=True
                 trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
-        else:
-            trades.to_hdf(trades_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=tr_mode, append=tr_append)
 
         print('\n\n\ngetting bids...\n\n\n')
         bid = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='BID', end_date=end_date, start_date=bids_start_date, tickerid=reqId)
-        if bid_mode == 'r+':
-            next_bids_idx = bid.loc[latest_bids_datetime:]
-            if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bid.iloc[-1]):
-                print('already have all bids data I think')
+        if bid is not None:
+            if bid_mode == 'r+':
+                next_bids_idx = bid.loc[latest_bids_datetime:]
+                if next_bids_idx.shape[0] <= 1 or cur_bids.iloc[-1].equals(bid.iloc[-1]):
+                    print('already have all bids data I think')
+                else:
+                    next_bids_idx = next_bids_idx.index[1]
+                    bid = bid.loc[next_bids_idx:]
+                    bid_append=True
+                    bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
             else:
-                next_bids_idx = next_bids_idx.index[1]
-                bid = bid.loc[next_bids_idx:]
-                bid_append=True
                 bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
-        else:
-            bid.to_hdf(bid_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=bid_mode, append=bid_append)
 
         print('\n\n\ngetting asks...\n\n\n')
         ask = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='ASK', end_date=end_date, start_date=asks_start_date, tickerid=reqId)
-        if ask_mode == 'r+':
-            next_asks_idx = ask.loc[latest_asks_datetime:]
-            if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(ask.iloc[-1]):
-                print('already have all asks data I think')
+        if ask is not None:
+            if ask_mode == 'r+':
+                next_asks_idx = ask.loc[latest_asks_datetime:]
+                if next_asks_idx.shape[0] <= 1 or cur_asks.iloc[-1].equals(ask.iloc[-1]):
+                    print('already have all asks data I think')
+                else:
+                    next_asks_idx = next_asks_idx.index[1]
+                    ask = ask.loc[next_asks_idx:]
+                    ask_append = True
+                    ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
             else:
-                next_asks_idx = next_asks_idx.index[1]
-                ask = ask.loc[next_asks_idx:]
-                ask_append = True
                 ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
-        else:
-            ask.to_hdf(ask_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=ask_mode, append=ask_append)
 
         print('\n\n\ngetting opt_vol...\n\n\n')
         opt_vol = self.get_hist_data_date_range(contract, barSizeSetting=barSizeSetting, whatToShow='OPTION_IMPLIED_VOLATILITY', end_date=end_date, start_date=opt_vol_start_date, tickerid=reqId)
-        if opt_vol_mode == 'r+':
-            # TODO: doesn't seem to be working properly for opt_vol, seems to append every time
-            next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
-            if next_opt_vol_idx.shape[0] <= 1 or cur_opt_vol.iloc[-1].equals(opt_vol.iloc[-1]):
-                print('already have all opt_vol data I think')
+        if opt_vol is not None:
+            if opt_vol_mode == 'r+':
+                # TODO: doesn't seem to be working properly for opt_vol, seems to append every time
+                next_opt_vol_idx = opt_vol.loc[latest_opt_vol_datetime:]
+                if next_opt_vol_idx.shape[0] <= 1 or cur_opt_vol.iloc[-1].equals(opt_vol.iloc[-1]):
+                    print('already have all opt_vol data I think')
+                else:
+                    next_opt_vol_idx = next_opt_vol_idx.index[1]
+                    opt_vol = opt_vol.loc[next_opt_vol_idx:]
+                    opt_vol_append = True
+                    opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
             else:
-                next_opt_vol_idx = next_opt_vol_idx.index[1]
-                opt_vol = opt_vol.loc[next_opt_vol_idx:]
-                opt_vol_append = True
                 opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
-        else:
-            opt_vol.to_hdf(opt_vol_filename, key='data', format='table', complevel=9, complib='blosc:lz4', mode=opt_vol_mode, append=opt_vol_append)
 
 
 
