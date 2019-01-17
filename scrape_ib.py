@@ -356,6 +356,7 @@ class TestClient(EClient):
 
             historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
 
+            er = ''
             while self.wrapper.is_error():
                 er = self.get_error()
                 print(er)
