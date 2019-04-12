@@ -882,12 +882,15 @@ def get_home_dir(repo_name='scrape_ib'):
     return home_dir
 
 
-def load_data(ticker='SNAP', barSizeSetting='3 mins'):
+def load_data(ticker='SNAP', barSizeSetting='3 mins', what='TRADES'):
     """
     loads historical tick data
     """
-    # folder = get_home_dir() + 'data/'
-    folder = '/home/nate/Dropbox/data/ib/data/'
+    if what == 'TRADES':
+        folder = '/home/nate/Dropbox/data/ib_full_adj/data/'
+    elif what == 'ADJUSTED_LAST':
+        folder = '/home/nate/Dropbox/data/ib_split_adj_only/data/'
+
     bss = barSizeSetting.replace(' ', '_')
 
     trades = pd.read_hdf(folder + ticker + '_trades_' + bss + '.h5')
@@ -1010,7 +1013,13 @@ if __name__ == '__main__':
 
     # test getting historical data range
     # contract, contract_details = app.get_stock_contract('SNAP')
-    # df = app.get_hist_data_date_range(ibcontract=contract, start_date='2018-08-01')
+    # df = app.get_hist_data_date_range(ibcontract=contract, start_date='2019-01-01')
+
+    # dl TSLA data
+    # ticker = 'TSLA'
+    # reqId = 100
+    # app.download_all_history_stock(ticker=ticker, reqId=reqId, barSizeSetting='3 mins')
+
 
     # TODO: update data on both sides -- new and old
     # tickers that have data back to earliest date
