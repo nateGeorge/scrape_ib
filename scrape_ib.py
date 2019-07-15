@@ -671,7 +671,45 @@ class TestApp(TestWrapper, TestClient):
         return resolved_ibcontract, contract_details
 
 
-    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID, what='TRADES'):
+    def get_otc_contract(self, ticker='SNAP', reqId=DEFAULT_HISTORIC_DATA_ID):
+        """
+        gets resolved IB contract for stocks
+
+        assumes ISLAND exchange for now (NASDAQ and maybe others?)
+        """
+        # available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
+        ibcontract = IBcontract()
+        ibcontract.secType = 'STK'
+        # get todays date, format as YYYYMMDD -- need to check this is correct
+        # today = datetime.datetime.today().strftime('%Y%m%d')
+        # ibcontract.lastTradeDateOrContractMonth = '20180711'#today
+        ibcontract.symbol = ticker
+        ibcontract.exchange = 'ARCAEDGE'
+
+        resolved_ibcontract, contract_details = self.resolve_ib_contract(ibcontract=ibcontract, reqId=reqId)
+
+        return resolved_ibcontract, contract_details
+
+
+    def get_forex_contract(self, main_currency='USD', second_currency='JPY', reqId=DEFAULT_HISTORIC_DATA_ID):
+        """
+        gets resolved IB contract for stocks
+
+        assumes ISLAND exchange for now (NASDAQ and maybe others?)
+        """
+        # available sec types: https://interactivebrokers.github.io/tws-api/classIBApi_1_1Contract.html#a4f83111c0ea37a19fe1dae98e3b67456
+        ibcontract = IBcontract()
+        ibcontract.symbol = 'EUR'#second_currency
+        ibcontract.secType = "CASH"
+        ibcontract.currency = 'GBP'#main_currency
+        ibcontract.exchange = "IDEALPRO"
+
+        resolved_ibcontract, contract_details = self.resolve_ib_contract(ibcontract=ibcontract, reqId=reqId)
+
+        return resolved_ibcontract, contract_details
+
+
+    def download_all_history_stock(self, ticker='SNAP', barSizeSetting='3 mins', reqId=DEFAULT_HISTORIC_DATA_ID, what='TRADES', exchange='ISLAND'):
         """
         downloads all historical data for a stock including
             TRADES or ADJUSTED_LAST
@@ -684,7 +722,11 @@ class TestApp(TestWrapper, TestClient):
         'what' parameter can be 'ADJUSTED_LAST' or 'TRADES'.
         ADJUSTED_LAST is the dividend-adjusted prices; trades is only split-adjusted
         """
-        contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
+        if exchange == 'ISLAND':  # NASDAQ / regular stocks
+            contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
+        elif exchange == 'ARCAEDGE':  # OTC / PINK
+            contract, contract_details = self.get_otc_contract(ticker=ticker, reqId=reqId)
+            
         if what == 'TRADES':
             folder = '/home/nate/Dropbox/data/ib_full_adj/data/'
         elif what == 'ADJUSTED_LAST':
