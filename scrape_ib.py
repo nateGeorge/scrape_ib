@@ -726,7 +726,7 @@ class TestApp(TestWrapper, TestClient):
             contract, contract_details = self.get_stock_contract(ticker=ticker, reqId=reqId)
         elif exchange == 'ARCAEDGE':  # OTC / PINK
             contract, contract_details = self.get_otc_contract(ticker=ticker, reqId=reqId)
-            
+
         if what == 'TRADES':
             folder = '/home/nate/Dropbox/data/ib_full_adj/data/'
         elif what == 'ADJUSTED_LAST':
@@ -1072,6 +1072,12 @@ if __name__ == '__main__':
         # TODO: skip stocks fully up-to-date
         # deal with missing tickers, e.g. DJIA
         # DJIA
+        # Need to also handle OTC stocks
+        c, cd = app.get_otc_contract('GBTC')
+        app.download_all_history_stock('GBTC', exchange='ARCAEDGE')
+
+
+
         # Getting full contract details from the server...
         # IB error id 122 errorcode 366 string No historical data query found for ticker id:122
         # IB error id 123 errorcode 200 string No security definition has been found for the request

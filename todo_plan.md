@@ -1,5 +1,6 @@
 # Plan of attack
 
+stocks ideas:
 Start with one or a few tickers -- TSLA
 Need to check that data is not missing
 start with hard rules like in day trader book
@@ -9,3 +10,11 @@ Take 20 days of data, train on it, then predict on next day
 Do this on a rolling basis and calculate metrics
 
 Check - how often does first VWAP move carry through the day?
+
+
+forex:
+cant trade because need 10MM for IB...
+start with USD-JPY
+collect data
+implement real-time MACD strategy
+backtest MACD with zipline
